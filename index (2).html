@@ -1,0 +1,1284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<title>SmartVision</title>
+<style>
+  :root{
+    --bg:#000; --card:#111a27; --fg:#fff; --muted:#a6b4c6; --yellow:#FFE600; --cyan:#00E5FF;
+    --blue:#1469e8; --green:#0e5a3c; --green-line:#2ee59d; --red:#D90429; --amber:#FF9F1C; --line:#243349;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);
+    font:16px/1.35 'Atkinson Hyperlegible',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent}
+  button{font:inherit;color:inherit;border:0;cursor:pointer;background:none}
+  button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--yellow);outline-offset:2px}
+  [hidden]{display:none !important}
+  svg{display:block;flex:none}
+
+  /* ---- views ---- */
+  .view{display:none;padding:10px 12px calc(16px + env(safe-area-inset-bottom,0px));max-width:560px;margin:0 auto}
+  .view.active{display:block}
+  /* the camera keeps running when its view is not on screen */
+  #view-camera:not(.active){display:block;position:fixed;left:0;top:0;width:4px;height:4px;opacity:0;overflow:hidden;pointer-events:none;z-index:-1}
+  #view-camera.active{padding:0;max-width:none;position:fixed;inset:0;background:#000}
+  #camStage{position:relative;width:100%;height:100%}
+  #video,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  .topbar{display:flex;align-items:center;gap:10px;padding:10px 0;position:relative;z-index:25}
+  .back{position:relative;z-index:25;min-height:56px;padding:0 20px;border-radius:16px;background:var(--card);border:2px solid var(--line);font-weight:800;font-size:1.1rem}
+  #view-camera .topbar{position:absolute;left:12px;top:0;z-index:25}
+
+  /* ---- header ---- */
+  header.top{display:flex;align-items:center;gap:12px;padding:10px 2px 6px}
+  header.top img{width:46px;height:46px;border-radius:12px}
+  header.top h1{margin:0;font-size:1.5rem;line-height:1;letter-spacing:.01em}
+  header.top h1 b{color:var(--cyan)}
+  header.top small{display:block;color:var(--muted);font-size:.8rem;margin-top:3px}
+  #chip{display:inline-flex;align-items:center;gap:8px;margin-left:auto;max-width:46%;padding:8px 14px;border-radius:22px;
+    border:2px solid var(--green-line);font-weight:700;font-size:.8rem;line-height:1.25;background:#05140d}
+  #chip i{width:11px;height:11px;border-radius:50%;background:var(--green-line);flex:none}
+  #chip.off{border-color:var(--red)} #chip.off i{background:var(--red)}
+  #modeChip{display:block;width:100%;margin:4px 0 0;position:relative;z-index:25;min-height:44px;padding:6px 16px;border-radius:14px;
+    background:#0b2a1c;border:2px solid var(--green-line);font-weight:800;font-size:.85rem;line-height:1.15;text-align:center}
+  #modeChip.off{background:#2a2a14;border-color:var(--yellow)}
+
+  /* ---- tiles ---- */
+  .tile{display:flex;align-items:center;gap:14px;width:100%;text-align:left;border-radius:20px;padding:14px 16px;
+    border:2px solid var(--line);background:var(--card);min-height:84px}
+  #hazTile{margin-top:4px;background:#06202c;border-color:var(--cyan)}
+  #hazTile.warn{background:var(--amber);border-color:#ffd08a;color:#000}
+  #hazTile.stop{background:var(--red);border-color:#ff8da0;color:#fff}
+  #hazTile h2{margin:0;font-size:1.5rem;line-height:1.1}
+  #hazTile p{margin:3px 0 0;font-size:1.05rem}
+  #hazTile .dist{margin-left:auto;min-width:76px;text-align:center;font-weight:800;font-size:1.5rem;padding:8px;border-radius:14px;background:rgba(0,0,0,.28)}
+  #hazTile.calm .dist{display:none}
+  #hazTile.calm{background:#0b5f63;border-color:#37c9cf}
+  #hazTile .ic-eye{flex:none;color:#e9ffff}
+  #hazTile.calm .ic-warn,#hazTile:not(.calm) .ic-eye{display:none}
+  #hazSub{white-space:pre-line}
+  #voiceLabel{display:block;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,.35)}
+  #voiceBtn{margin-top:10px;background:var(--blue);border-color:#5b9bff;min-height:132px;align-items:center}
+  #voiceBtn[data-state="listening"]{background:var(--yellow);color:#000;border-color:#fff3a0}
+  #voiceBtn .t{display:block;font-size:1.55rem;font-weight:800;line-height:1.1}
+  #voiceBtn .l{display:block;margin-top:6px;font-size:.98rem;line-height:1.3;opacity:.95}
+  #voiceBtn .l b{opacity:.75;font-weight:700}
+  .three{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}
+  .three .tile{flex-direction:column;justify-content:center;text-align:center;gap:6px;min-height:92px;padding:10px 6px;font-weight:800}
+  .three small{display:block;font-weight:400;color:var(--muted);font-size:.78rem}
+  #backTile{background:#1a1245;border-color:#6b55d6}
+  #radar{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px}
+  .zone{background:var(--green);border:2px solid var(--green-line);border-radius:14px;padding:8px 2px;text-align:center;min-width:0}
+  .zone .ar{display:block;margin:0 auto 2px;color:#7dffcb}
+  .zone.yellow .ar,.zone.red .ar{color:inherit}
+  .zone .zn{font-size:.74rem;font-weight:800}
+  .zone .zv{margin-top:3px;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .zone.seen{background:#06324a;border-color:var(--cyan)}
+  .zone.yellow{background:var(--yellow);border-color:#fff3a0;color:#000}
+  .zone.red{background:var(--red);border-color:#ff8da0;color:#fff}
+  #navCard,.navcard{margin-top:10px;border-radius:20px;border:2px solid var(--yellow);background:#14120a;padding:14px 16px}
+  .navcard h3{margin:0;font-size:1.25rem;color:var(--yellow)}
+  .navcard p{margin:4px 0 0}
+  .navcard .bar{height:12px;border-radius:8px;background:#2b2a1c;margin:10px 0;overflow:hidden}
+  .navcard .bar i{display:block;height:100%;width:0;background:var(--yellow)}
+  .stopNav{width:100%;min-height:64px;border-radius:16px;background:var(--red);color:#fff;font-weight:800;font-size:1.2rem}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .two .tile{flex-direction:column;justify-content:center;text-align:center;min-height:128px;font-size:1.3rem;font-weight:800;gap:8px}
+  .two small{display:block;margin-top:2px;font-weight:400;color:#d6e4ff;font-size:.9rem}
+  #mapTile{background:var(--green);border-color:var(--green-line)}
+  #camTile{background:#0b3a86;border-color:#5b9bff}
+  #moreBtn{margin-top:10px;min-height:68px;justify-content:center;font-weight:800;font-size:1.1rem}
+  #navStatus{margin-top:8px;min-height:1.3em;color:var(--muted);font-size:.92rem}
+
+  /* ---- map / more ---- */
+  #map{height:calc(100vh - 340px);min-height:260px;border-radius:18px;border:2px solid var(--green-line);background:#0b1220}
+  #mapMsg{color:var(--muted);margin:6px 0}
+  .speakBtn.wide{margin-top:10px;min-height:76px;border-radius:20px;background:var(--blue);font-weight:800;font-size:1.3rem;width:100%}
+  .speakBtn[data-state="listening"]{background:var(--yellow);color:#000}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  .opt{min-height:60px;padding:0 18px;border-radius:16px;background:var(--card);border:2px solid var(--line);font-weight:700}
+  .opt[aria-pressed="false"]{color:var(--muted)}
+  input{flex:1;min-width:0;min-height:56px;border-radius:14px;border:2px solid var(--line);background:#05080d;color:var(--fg);padding:0 14px;font:inherit}
+  #fps,#dbg{color:var(--muted);font-size:.85rem}
+
+  /* ---- overlays ---- */
+  #hazBar{position:fixed;left:10px;right:10px;top:10px;z-index:35;padding:12px 16px;border-radius:16px;background:var(--red);color:#fff;
+    font-weight:800;font-size:1.3rem;border:2px solid #ff8da0;}
+  #flash{position:fixed;inset:0;pointer-events:none;z-index:30;box-shadow:inset 0 0 0 0 var(--red);transition:box-shadow .15s}
+  #flash.on{box-shadow:inset 0 0 0 10px var(--red)}
+  #gesture{position:fixed;inset:0;z-index:20;background:transparent;width:100%;height:100%}
+  #splash{position:fixed;inset:0;z-index:50;background:#000;color:var(--yellow);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-size:2rem;font-weight:800;text-align:center;padding:24px}
+  #splash small{color:var(--cyan);font-size:1.05rem;font-weight:700}
+  #splash em{font-style:normal;color:var(--muted);font-size:.95rem;font-weight:400;max-width:30ch}
+  #splash img{border-radius:22px}
+</style>
+</head>
+<body>
+<button id="splash" type="button" aria-label="Tap anywhere to start SmartVision">
+  <img src="icon-192.png" width="96" height="96" alt="">
+  <span>Tap anywhere to start</span>
+  <small>SmartVision</small>
+  <em>Hands-free mode: tap anywhere to speak. A helper can tap the green chip at the top right to use the buttons.</em>
+</button>
+<div id="flash" aria-hidden="true"></div>
+<div id="hazBar" role="alert" aria-live="assertive" hidden></div>
+<button id="gesture" type="button" aria-label="Tap to speak. Press and hold to repeat. Double tap to stop."></button>
+
+<section id="view-main" class="view active" aria-label="SmartVision">
+  <button id="modeChip" type="button" aria-label="Hands-free mode is on. Tap to switch to button mode for a helper">Hands-free ON</button>
+  <header class="top">
+    <img src="icon-192.png" alt="">
+    <div><h1>Smart<b>Vision</b></h1><small>Your AI vision assistant</small></div>
+    <div id="chip" class="off" aria-live="polite"><i></i><span><span id="chipText">Camera off</span><br><span id="chipText2"></span></span></div>
+  </header>
+
+  <div id="hazTile" class="tile calm" role="status" aria-live="polite">
+    <svg class="ic-warn" width="52" height="52" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V9h2v4z"/></svg>
+    <svg class="ic-eye" width="64" height="64" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 6C6.5 6 2.7 9.6 1 12c1.7 2.4 5.5 6 11 6s9.3-3.600 11-6c-1.700-2.400-5.500-6-11-6zm0 9.500A3.500 3.500 0 1 1 12 8.500a3.500 3.500 0 0 1 0 7z"/><circle cx="12" cy="12" r="1.800"/><path d="M12 1.500v2.500M5 3.500l1.500 2M19 3.500l-1.500 2" stroke="currentColor" stroke-width="1.500" stroke-linecap="round" fill="none"/></svg>
+    <div><h2 id="hazTitle">Scanning the path</h2><p id="hazSub">Obstacle detection is ON</p></div>
+    <div class="dist" id="hazDist"></div>
+  </div>
+
+  <button id="voiceBtn" class="tile" type="button" aria-label="Tap and speak a place or a command">
+    <svg width="84" height="84" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="21" fill="none" stroke="#fff" stroke-width="2.500"/><g fill="#fff" transform="translate(24 24) scale(.8) translate(-24 -24)"><path d="M24 29a5 5 0 0 0 5-5V15a5 5 0 0 0-10 0v9a5 5 0 0 0 5 5z"/><path d="M33 23h-2.200a6.800 6.800 0 0 1-13.600 0H15a9 9 0 0 0 8 8.900V36h2v-4.100A9 9 0 0 0 33 23z"/></g></svg>
+    <span style="min-width:0">
+      <span class="t" id="voiceLabel">Tap to speak</span>
+      <span class="l"><b>You said:</b> <span id="heard">—</span></span>
+      <span class="l"><b>App said:</b> <span id="say">Starting…</span></span>
+    </span>
+  </button>
+
+  <div class="three">
+    <button id="calBtn" class="tile" type="button" aria-label="Calibrate distance. Stand a person two metres away.">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.9 3A9 9 0 0 0 13 3.1V1h-2v2.1A9 9 0 0 0 3.1 11H1v2h2.1A9 9 0 0 0 11 20.9V23h2v-2.1a9 9 0 0 0 7.9-7.9H23v-2h-2.1zM12 19a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"/></svg>
+      <span>Calibrate<small>(2 m)</small></span></button>
+    <button id="repeatBtn" class="tile" type="button" aria-label="Repeat the last message">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 5V1L7 6l5 5V7a6 6 0 0 1 0 12 6 6 0 0 1-6-6H4a8 8 0 0 0 8 8 8 8 0 0 0 0-16z"/></svg>
+      <span>Repeat<small>Last message</small></span></button>
+    <div id="backTile" class="tile" role="status" aria-label="Back awareness is not active yet">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg>
+      <span>Back<small>Not active yet</small></span></div>
+  </div>
+
+  <div id="radar" aria-hidden="true">
+    <div class="zone" id="zFL"><div class="zn"><svg class="ar" width="34" height="34" viewBox="0 0 24 24" fill="currentColor" style="transform:rotate(-45deg)"><path d="M12 3l8 9h-5v9H9v-9H4z"/></svg>Far Left</div><div class="zv">—</div></div>
+    <div class="zone" id="zL"><div class="zn"><svg class="ar" width="34" height="34" viewBox="0 0 24 24" fill="currentColor" style="transform:rotate(-90deg)"><path d="M12 3l8 9h-5v9H9v-9H4z"/></svg>Left</div><div class="zv">—</div></div>
+    <div class="zone" id="zA"><div class="zn"><svg class="ar" width="34" height="34" viewBox="0 0 24 24" fill="currentColor" style="transform:rotate(0deg)"><path d="M12 3l8 9h-5v9H9v-9H4z"/></svg>Ahead</div><div class="zv">—</div></div>
+    <div class="zone" id="zR"><div class="zn"><svg class="ar" width="34" height="34" viewBox="0 0 24 24" fill="currentColor" style="transform:rotate(90deg)"><path d="M12 3l8 9h-5v9H9v-9H4z"/></svg>Right</div><div class="zv">—</div></div>
+    <div class="zone" id="zFR"><div class="zn"><svg class="ar" width="34" height="34" viewBox="0 0 24 24" fill="currentColor" style="transform:rotate(45deg)"><path d="M12 3l8 9h-5v9H9v-9H4z"/></svg>Far Right</div><div class="zv">—</div></div>
+  </div>
+
+  <div id="navCard" class="navcard" hidden>
+    <h3 class="nv-dest">Destination</h3>
+    <p class="nv-left">—</p>
+    <p class="nv-next">—</p>
+    <div class="bar"><i class="nv-bar"></i></div>
+    <button class="stopNav" type="button">Stop navigation</button>
+  </div>
+
+  <div class="two">
+    <button id="mapTile" class="tile" type="button" aria-label="Open map">
+      <svg width="46" height="46" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>
+      <span>Map<small>Open map</small></span></button>
+    <button id="camTile" class="tile" type="button" aria-label="Open camera live view">
+      <svg width="46" height="46" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 3 7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 15a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+      <span>Camera<small>Live view</small></span></button>
+  </div>
+  <button id="moreBtn" class="tile" type="button">More: settings and options</button>
+  <div id="navStatus" aria-live="polite"></div>
+</section>
+
+<section id="view-camera" class="view" aria-label="Camera live view">
+  <div id="camStage">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <div class="topbar"><button class="back" id="camBack" type="button">Back</button></div>
+  </div>
+</section>
+
+<section id="view-map" class="view" aria-label="Map">
+  <div class="topbar"><button class="back" id="mapBack" type="button">Back</button><b>Map</b></div>
+  <div id="map" aria-hidden="true"></div>
+  <div id="mapMsg" aria-live="polite"></div>
+  <div id="mapNav" class="navcard" hidden>
+    <h3 class="nv-dest">Destination</h3>
+    <p class="nv-left">—</p>
+    <p class="nv-next">—</p>
+    <div class="bar"><i class="nv-bar"></i></div>
+    <button class="stopNav" type="button">Stop navigation</button>
+  </div>
+  <button class="speakBtn wide" type="button">Tap and speak</button>
+</section>
+
+<section id="view-more" class="view" aria-label="Settings and options">
+  <div class="topbar"><button class="back" id="moreBack" type="button">Back</button><b>More options</b></div>
+  <div class="row"><button id="startBtn" class="opt" type="button" style="flex:1">Stop camera</button></div>
+  <form id="navForm" class="row">
+    <input id="dest" type="text" placeholder="Or type a destination" autocomplete="off" aria-label="Destination">
+    <button id="goBtn" class="opt" type="submit">Go</button>
+  </form>
+  <div class="row">
+    <button id="alertBtn" class="opt" type="button" aria-pressed="true">Alerts: On</button>
+    <button id="shakeBtn" class="opt" type="button" aria-pressed="true">Shake to speak: On</button>
+    <button id="earBtn" class="opt" type="button" aria-pressed="true">Earphone button: On</button>
+    <button id="helpBtn" class="opt" type="button">Voice commands</button>
+    <button id="csvBtn" class="opt" type="button">Save log (CSV)</button>
+  </div>
+  <div class="row"><span id="fps"></span><span id="dbg"></span></div>
+  <button id="langBtn" type="button" hidden>English</button>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+// ==== PURE LOGIC START ====
+// Same rules as the Python modules: position_analysis.py, text_generation.py, navigation.py
+const TH = { leftMax: 0.35, rightMin: 0.65, near: 0.25, medium: 0.06 };
+
+function analyze(pred, W, H, cam) {
+  const [x, y, w, h] = pred.bbox;
+  const cx = (x + w / 2) / W;
+  const horiz = cx < TH.leftMax ? 'left' : (cx > TH.rightMin ? 'right' : 'center');
+  const ratio = (w * h) / (W * H);
+  const dist = ratio >= TH.near ? 'near' : (ratio >= TH.medium ? 'medium' : 'far');
+  const cy = (y + h / 2) / H;
+  const a = { label: pred.class, score: pred.score, horiz, dist, ratio, cx, cy, size: Math.sqrt(ratio),
+    bbox: pred.bbox, zone: zone5(cx), hN: h / H, bottomN: (y + h) / H,
+    truncated: y <= 0.01 * H || (y + h) >= 0.99 * H };
+  if (cam) { const f = fuseDist(a, cam); if (f) { a.m = f.m; a.msrc = f.src; a.mok = f.ok; } }
+  return a;
+}
+
+const TA_LABELS = {
+  person: 'மனிதர்', chair: 'நாற்காலி', couch: 'சோபா', bed: 'படுக்கை',
+  'dining table': 'மேசை', tv: 'தொலைக்காட்சி', laptop: 'மடிக்கணினி',
+  bottle: 'பாட்டில்', cup: 'கோப்பை', car: 'கார்', bicycle: 'சைக்கிள்',
+  motorcycle: 'மோட்டார் சைக்கிள்', bus: 'பேருந்து', truck: 'லாரி',
+  dog: 'நாய்', cat: 'பூனை', 'cell phone': 'கைபேசி', book: 'புத்தகம்',
+  backpack: 'பை', 'potted plant': 'செடி', toilet: 'கழிப்பறை',
+  refrigerator: 'குளிர்சாதனப் பெட்டி', clock: 'கடிகாரம்', bench: 'பெஞ்சு',
+  'traffic light': 'போக்குவரத்து விளக்கு', 'stop sign': 'நிறுத்த அடையாளம்'
+};
+
+const TEXT = {
+  en: {
+    pos: { left: 'on your left', center: 'ahead', right: 'on your right' },
+    dist: { near: 'very close', medium: 'a few steps away', far: 'far away' },
+    sentence: (l, p, d) => `${l} ${p}, ${d}`
+  },
+  ta: {
+    pos: { left: 'இடதுபுறம்', center: 'நேரே', right: 'வலதுபுறம்' },
+    dist: { near: 'மிக அருகில்', medium: 'சற்று தொலைவில்', far: 'தொலைவில்' },
+    sentence: (l, p, d) => `${l} ${p} ${d} உள்ளது`
+  }
+};
+
+function sentenceFor(a, lang) {
+  const label = lang === 'ta' ? (TA_LABELS[a.label] || a.label) : a.label;
+  return TEXT[lang].sentence(label, TEXT[lang].pos[a.horiz], TEXT[lang].dist[a.dist]);
+}
+
+// Closest and most central first; announce at most two.
+function pickTop(items, n = 2) {
+  const rank = { near: 0, medium: 1, far: 2 };
+  return items.slice().sort((a, b) =>
+    rank[a.dist] - rank[b.dist] || Math.abs(a.cx - 0.5) - Math.abs(b.cx - 0.5)
+  ).slice(0, n);
+}
+
+function distanceM(a, b) {
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dp = toRad(b[0] - a[0]), dl = toRad(b[1] - a[1]);
+  const h = Math.sin(dp / 2) ** 2 +
+            Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+const TA_TURN = {
+  left: 'இடதுபுறம்', right: 'வலதுபுறம்',
+  'slight left': 'சற்று இடதுபுறம்', 'slight right': 'சற்று வலதுபுறம்',
+  'sharp left': 'கூர்மையாக இடதுபுறம்', 'sharp right': 'கூர்மையாக வலதுபுறம்'
+};
+
+function describeStep(step, lang) {
+  const m = step.maneuver || {};
+  const type = m.type || '', mod = m.modifier || '';
+  const road = step.name || '';
+  const ta = lang === 'ta';
+  if (type === 'depart') return ta ? `${road || 'பாதை'} வழியாக நடக்கத் தொடங்குங்கள்` : `Start walking along ${road || 'the path'}`;
+  if (type === 'arrive') return ta ? 'உங்கள் இடத்தை அடைந்துவிட்டீர்கள்' : 'You have arrived at your destination';
+  if (mod === 'uturn') return ta ? 'திரும்பிச் செல்லுங்கள்' : 'Make a U-turn';
+  if (TA_TURN[mod] || mod === 'left' || mod === 'right') {
+    return ta ? `${road ? road + ' சாலையில் ' : ''}${TA_TURN[mod]} திரும்புங்கள்`
+              : `Turn ${mod}${road ? ' onto ' + road : ''}`;
+  }
+  return ta ? `${road || 'பாதை'} வழியாக நேராகச் செல்லுங்கள்` : `Continue straight on ${road || 'the path'}`;
+}
+
+function stepSpeech(step, lang) {
+  const text = describeStep(step, lang);
+  if (step.distance < 10 || (step.maneuver && step.maneuver.type === 'arrive')) return text;
+  const n = Math.max(10, Math.round(step.distance / 10) * 10);
+  return lang === 'ta' ? `${text}, ${n} மீட்டர்` : `${text}, for ${n} metres`;
+}
+
+class Navigator {
+  constructor(steps, radius = 20) {
+    this.steps = steps; this.i = 0; this.radius = radius;
+  }
+  loc(i) { const [lon, lat] = this.steps[i].maneuver.location; return [lat, lon]; }
+  first(lang) { return stepSpeech(this.steps[0], lang); }
+  finished() { return this.i >= this.steps.length - 1; }
+  // Returns text to speak when the walker reaches the next turn, else null.
+  update(pos, lang) {
+    if (this.finished()) return null;
+    for (let j = this.i + 1; j <= Math.min(this.i + 2, this.steps.length - 1); j++) {
+      if (distanceM(pos, this.loc(j)) < this.radius) {
+        this.i = j;
+        return stepSpeech(this.steps[j], lang);
+      }
+    }
+    return null;
+  }
+  metresToNext(pos) {
+    return this.finished() ? 0 : Math.round(distanceM(pos, this.loc(this.i + 1)));
+  }
+  // Distance still to walk: straight line to the next turn, then the length of every later step.
+  remainingM(pos) {
+    if (this.finished()) return 0;
+    let r = distanceM(pos, this.loc(this.i + 1));
+    for (let j = this.i + 1; j < this.steps.length; j++) r += this.steps[j].distance || 0;
+    return Math.round(r);
+  }
+  totalM() { return Math.round(this.steps.reduce((t, s) => t + (s.distance || 0), 0)); }
+}
+
+// ---- Danger alerts: track objects over time, detect approach / side entry ----
+// Small table-top items never count as dangers.
+const IGNORE = new Set(['bottle','cup','book','cell phone','laptop','remote','keyboard','mouse',
+  'fork','knife','spoon','bowl','wine glass','scissors','toothbrush','vase','clock','tv']);
+
+class Tracker {
+  constructor() { this.tracks = []; this.nextId = 1; }
+  update(items, now) {
+    const free = this.tracks.slice();
+    for (const it of items) {
+      let best = null, bestD = 0.25;
+      for (const t of free) {
+        if (t.label !== it.label) continue;
+        const l = t.hist[t.hist.length - 1];
+        const d = Math.hypot(l.cx - it.cx, l.cy - it.cy);
+        if (d < bestD) { best = t; bestD = d; }
+      }
+      const s = { t: now, cx: it.cx, cy: it.cy, size: it.size, m: it.m == null ? null : it.m };
+      if (best) { free.splice(free.indexOf(best), 1); best.hist.push(s); best.seen = now; best.item = it; }
+      else this.tracks.push({ id: this.nextId++, label: it.label, hist: [s], seen: now,
+        enteredFrom: it.cx < 0.18 ? 'left' : (it.cx > 0.82 ? 'right' : null), alertedAt: 0, item: it });
+    }
+    for (const t of this.tracks) {
+      while (t.hist.length && now - t.hist[0].t > 1500) t.hist.shift();
+      t.m = median(t.hist.slice(-5).map(x => x.m));   // smoothed metres
+    }
+    this.tracks = this.tracks.filter(t => t.hist.length && now - t.seen < 700);
+    return this.tracks;
+  }
+}
+
+const avg = (a, k) => a.reduce((s, x) => s + x[k], 0) / a.length;
+
+// Returns {level:'warn'|'stop', from:'left'|'right'|'ahead', label, tau, id} or null.
+// tau = estimated seconds until it reaches you (object size / how fast its size grows).
+function assess(t) {
+  if (IGNORE.has(t.label) || t.hist.length < 5) return null;
+  const h = t.hist;
+  if ((h[h.length - 1].t - h[0].t) < 500) return null;
+  const a = h.slice(0, 2), b = h.slice(-2);
+  const dt = (avg(b, 't') - avg(a, 't')) / 1000;
+  if (dt < 0.35) return null;
+  const s0 = avg(a, 'size'), s1 = avg(b, 'size');
+  const ratio = s1 / s0, grow = (s1 - s0) / dt;
+  const vx = (avg(b, 'cx') - avg(a, 'cx')) / dt;   // frame-widths per second, + = moving right
+  const cx = avg(b, 'cx');
+  const tau = grow > 0.02 ? s1 / grow : Infinity;
+  const horiz = cx < TH.leftMax ? 'left' : (cx > TH.rightMin ? 'right' : 'center');
+  let from = null;
+  if (s1 >= 0.15 && ratio > 1.05 && ((horiz === 'left' && vx > 0.08) || (horiz === 'right' && vx < -0.08))) from = horiz;
+  else if (s1 >= 0.2 && t.enteredFrom && ((t.enteredFrom === 'left' && vx > 0.12) || (t.enteredFrom === 'right' && vx < -0.12))) from = t.enteredFrom;
+  else if (s1 >= 0.2 && ratio > 1.1 && tau < 5 && cx > 0.2 && cx < 0.8) from = 'ahead';
+  if (!from) return null;
+  const stop = tau < 2 || (s1 >= 0.5 && ratio > 1.08);
+  return { level: stop ? 'stop' : 'warn', from, label: t.label, tau, id: t.id };
+}
+
+function pickAlert(list) {
+  if (!list.length) return null;
+  return list.slice().sort((x, y) =>
+    (x.level === 'stop' ? 0 : 1) - (y.level === 'stop' ? 0 : 1) || x.tau - y.tau)[0];
+}
+
+const AL = {
+  en: { from: { left: 'from the left', right: 'from the right', ahead: 'ahead' },
+        warn: (l, f) => `Warning! ${l} approaching ${f}`,
+        stop: (l, f) => `Stop! ${l} very close, ${f}` },
+  ta: { from: { left: 'இடதுபுறத்திலிருந்து', right: 'வலதுபுறத்திலிருந்து', ahead: 'முன்னால்' },
+        warn: (l, f) => `எச்சரிக்கை! ${l} ${f} நெருங்குகிறது`,
+        stop: (l, f) => `நிறுத்துங்கள்! ${l} மிக அருகில், ${f}` }
+};
+function alertText(al, lang) {
+  const l = lang === 'ta' ? (TA_LABELS[al.label] || al.label) : al.label;
+  return AL[lang][al.level](l, AL[lang].from[al.from]);
+}
+
+// ---- Stage 1: zones, metres, motion words, priority queue, visibility ----
+function zone5(cx) {
+  return cx < 0.2 ? 'far left' : cx < 0.4 ? 'left' : cx <= 0.6 ? 'ahead' : cx <= 0.8 ? 'right' : 'far right';
+}
+const ZONE_TEXT = { 'far left': 'far on your left', left: 'on your left', ahead: 'ahead',
+                    right: 'on your right', 'far right': 'far on your right' };
+
+// Real heights (metres) for the known-size distance method.
+const REAL_H = { person: 1.7, car: 1.5, bus: 3.0, truck: 3.0, bicycle: 1.0, motorcycle: 1.2,
+  chair: 0.9, couch: 0.85, bench: 0.85, dog: 0.5, 'dining table': 0.75, refrigerator: 1.7,
+  'stop sign': 0.75, 'fire hydrant': 0.7 };
+// focal is in frame-heights (1.0 ~ 53 degree vertical field of view); height = camera above ground.
+const CAM = { focal: 1.0, height: 1.2, tiltDeg: 0 };
+
+function median(arr) {
+  const s = arr.filter(x => x != null).sort((a, b) => a - b);
+  if (!s.length) return null;
+  const n = s.length;
+  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+}
+// Main method: distance = real height x focal / box height. Unreliable when the box is cut by the frame edge.
+function knownSizeDist(a, cam) {
+  const H = REAL_H[a.label];
+  if (!H || a.truncated || a.hN < 0.04) return null;
+  return Math.min(30, H * cam.focal / a.hN);
+}
+// Backup: where the object touches the floor, with camera height and tilt.
+function groundDist(a, cam) {
+  if (a.bottomN >= 0.98) return null;
+  const ang = Math.atan((a.bottomN - 0.5) / cam.focal) + cam.tiltDeg * Math.PI / 180;
+  if (ang < 0.03) return null;
+  return Math.min(30, cam.height / Math.tan(ang));
+}
+function fuseDist(a, cam) {
+  const k = knownSizeDist(a, cam), g = groundDist(a, cam);
+  if (k != null && g != null) {
+    const r = Math.max(k, g) / Math.min(k, g);
+    return r <= 1.4 ? { m: 0.6 * k + 0.4 * g, src: 'both', ok: true } : { m: k, src: 'size', ok: false };
+  }
+  if (k != null) return { m: k, src: 'size', ok: true };
+  if (g != null) return { m: g, src: 'ground', ok: true };
+  return null;
+}
+// Stand a whole person at a known distance, press Calibrate: returns the focal length for this phone.
+function calibrateFocal(label, metres, a) {
+  const H = REAL_H[label];
+  if (!H || a.truncated || a.hN < 0.1) return null;
+  return Math.max(0.4, Math.min(2.5, metres * a.hN / H));
+}
+function metresText(m) {
+  if (m == null) return null;
+  if (m < 1) return 'less than 1 metre';
+  if (m < 3) { const r = Math.round(m * 2) / 2; return r === 1 ? '1 metre' : `${r} metres`; }
+  if (m < 6) return `${Math.round(m)} metres`;
+  return 'far away';
+}
+
+// ---- Motion words with ego-motion fix ----
+const STATIC_CLASSES = new Set(['bench','chair','couch','potted plant','dining table','bed','toilet',
+  'refrigerator','traffic light','stop sign','fire hydrant','parking meter','tv']);
+function isWalking(mags) {            // accelerometer magnitudes (m/s2) from the last ~1.5 s
+  if (mags.length < 10) return false;
+  const mean = mags.reduce((s, x) => s + x, 0) / mags.length;
+  const sd = Math.sqrt(mags.reduce((s, x) => s + (x - mean) ** 2, 0) / mags.length);
+  return sd > 0.9;
+}
+// Static classes are never "approaching". For movers, the user's own walking speed is subtracted.
+function motionOf(t, walking, userSpeed = 1.2) {
+  if (STATIC_CLASSES.has(t.label)) return { state: 'static' };
+  const h = t.hist.filter(s => s.m != null);
+  if (h.length < 5 || (h[h.length - 1].t - h[0].t) < 800) return null;
+  const a = h.slice(0, 3), b = h.slice(-3);
+  const dt = (avg(b, 't') - avg(a, 't')) / 1000;
+  if (dt < 0.4) return null;
+  const net = (avg(a, 'm') - avg(b, 'm')) / dt - (walking ? userSpeed : 0);
+  const vx = (avg(b, 'cx') - avg(a, 'cx')) / dt;
+  if (net > 0.4) return { state: 'approaching', net };
+  if (net < -0.5) return { state: 'moving away', net };
+  if (Math.abs(vx) > 0.15) return { state: 'crossing', dir: vx > 0 ? 'left to right' : 'right to left', net };
+  return { state: 'standing', net };
+}
+function sentenceM(a, motion) {
+  const dist = metresText(a.m) || TEXT.en.dist[a.dist];
+  const st = motion && motion.state;
+  if (st === 'crossing') return `${a.label} crossing ${motion.dir}, ${dist}`;
+  const verb = st === 'approaching' ? ' approaching' : (st === 'moving away' ? ' moving away' : '');
+  return `${a.label}${verb} ${ZONE_TEXT[a.zone]}, ${dist}`;
+}
+// Priority of a plain object by how close it is in the walking path: 0 stop, 1 warning, else 3.
+function proximity(a) {
+  if (IGNORE.has(a.label) || a.m == null || a.horiz !== 'center') return 3;
+  if (a.m <= 1.0) return 0;
+  if (a.m <= 2.0) return 1;
+  return 3;
+}
+
+// ---- Priority queue: 0 danger, 1 approach/side/back/visibility, 2 navigation, 3 normal ----
+class PriorityQueue {
+  constructor() { this.items = []; this.lastSaid = new Map(); }
+  enqueue(msg, now) {
+    const cd = msg.cooldown || 0;
+    if (cd && now - (this.lastSaid.has(msg.key) ? this.lastSaid.get(msg.key) : -1e9) < cd) return false;
+    const ttl = msg.ttl == null ? 3000 : msg.ttl;
+    const dup = this.items.find(i => i.key === msg.key);
+    if (dup) { dup.text = msg.text; dup.priority = Math.min(dup.priority, msg.priority); dup.t = now; dup.ttl = ttl; return true; }
+    this.items.push({ text: msg.text, priority: msg.priority, key: msg.key, t: now, ttl });
+    return true;
+  }
+  live(now) {
+    this.items = this.items.filter(i => now - i.t <= i.ttl);
+    return this.items.slice().sort((a, b) => a.priority - b.priority || a.t - b.t);
+  }
+  peek(now) { return this.live(now)[0] || null; }
+  next(now) {
+    const top = this.peek(now);
+    if (!top) return null;
+    this.items.splice(this.items.indexOf(top), 1);
+    this.lastSaid.set(top.key, now);
+    return top;
+  }
+}
+
+// ---- Visibility: is the camera dark, blocked or blurry? (input: grey pixels of a small frame) ----
+function greyStats(rgba, w, h) {
+  const g = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) g[i] = 0.299 * rgba[4 * i] + 0.587 * rgba[4 * i + 1] + 0.114 * rgba[4 * i + 2];
+  let mean = 0; for (const v of g) mean += v; mean /= g.length;
+  let sd = 0; for (const v of g) sd += (v - mean) ** 2; sd = Math.sqrt(sd / g.length);
+  let sharp = 0, n = 0;
+  for (let y = 0; y < h; y++) for (let x = 1; x < w; x++) { sharp += Math.abs(g[y * w + x] - g[y * w + x - 1]); n++; }
+  return { mean, std: sd, sharp: sharp / n };
+}
+function visibility(s) {
+  if (s.mean < 25) return 'dark';
+  if (s.std < 9) return 'blocked';
+  if (s.sharp < 2.0) return 'blurry';
+  return null;
+}
+const VIS_TEXT = { dark: 'Camera view is very dark. I may miss obstacles.',
+  blocked: 'Camera may be blocked. I cannot see ahead.',
+  blurry: 'Camera image is blurry. Detection may be unreliable.' };
+
+// ---- Voice destination helpers ----
+function cleanDestination(t) {
+  let s = String(t).toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+  s = s.replace(/^(please\s+)?(can you\s+|could you\s+)?(take me|navigate|guide me|lead me|i want to go|i wanna go|i need to go|let's go|let us go|go|directions|route)\s*(to|towards|for)?\s*/, '');
+  return s.replace(/^(the|to)\s+/, '').trim();
+}
+function parseYesNo(t) {
+  const s = String(t).toLowerCase();
+  if (/\b(no|nope|cancel|wrong|stop|don't|do not)\b/.test(s)) return 'no';
+  if (/\b(yes|yeah|yep|yup|ok|okay|sure|correct|start|go ahead|right|confirm)\b/.test(s)) return 'yes';
+  return null;
+}
+function distanceText(m) {
+  if (m < 1000) return `${Math.max(10, Math.round(m / 10) * 10)} metres`;
+  return `${(m / 1000).toFixed(1)} kilometres`;
+}
+function durationText(sec) {
+  if (sec < 60) return 'less than a minute';
+  const min = Math.round(sec / 60);
+  return min === 1 ? '1 minute' : `${min} minutes`;
+}
+function parseCommand(t) {
+  const s = String(t).toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/\b(where am i|my location|current location|where i am)\b/.test(s)) return { cmd: 'where' };
+  if (/\b(repeat|say that again|say again)\b/.test(s)) return { cmd: 'repeat' };
+  if (/\bcalibrat/.test(s)) return { cmd: 'calibrate' };
+  if (/^(help|what can i say)$|\bwhat can i say\b/.test(s)) return { cmd: 'help' };
+  if (/\b(stop|cancel|end)\b.*\b(navigation|route|guiding|directions)\b/.test(s)) return { cmd: 'stopnav' };
+  if (/\b(stop|turn off|close|pause)\b.*\b(camera|detection|app|smartvision)\b/.test(s)) return { cmd: 'stopcam' };
+  if (/\b(show|view)\b.*\bcamera\b|\blive view\b/.test(s)) return { cmd: 'showcam' };
+  if (/\b(start|turn on|open|resume)\b.*\b(camera|detection)\b/.test(s) || s === 'start') return { cmd: 'startcam' };
+  if (/^(stop|cancel)$/.test(s)) return { cmd: 'stop' };
+  if (/\b(helper mode|button mode|touch mode)\b/.test(s)) return { cmd: 'helper' };
+  if (/\bhands[- ]?free\b/.test(s)) return { cmd: 'handsfree' };
+  if (/\b(main screen|go back|back to main)\b/.test(s)) return { cmd: 'home' };
+  if (/\b(show|open|view)\b.*\bmap\b|^map$/.test(s)) return { cmd: 'map' };
+  return null;
+}
+function shortName(n) { return String(n || '').split(',').slice(0, 2).join(',').trim(); }
+
+// ---- Shake to speak: count sharp acceleration peaks inside a short window ----
+function makeShakeDetector(o = {}) {
+  const dev = o.dev || 14, need = o.count || 4, win = o.windowMs || 1200, gap = o.gapMs || 80, cool = o.cooldownMs || 3000;
+  let peaks = [], last = -1e9;
+  return {
+    update(ax, ay, az, t) {
+      const d = Math.abs(Math.hypot(ax, ay, az) - 9.8);
+      if (d > dev && (!peaks.length || t - peaks[peaks.length - 1] > gap)) peaks.push(t);
+      peaks = peaks.filter(p => t - p <= win);
+      if (peaks.length >= need && t - last > cool) { last = t; peaks = []; return true; }
+      return false;
+    }
+  };
+}
+// ==== PURE LOGIC END ====
+
+// ---------- App ----------
+const $ = id => document.getElementById(id);
+const video = $('video'), overlay = $('overlay'), ctx = overlay.getContext('2d');
+const sayEl = $('say'), navStatus = $('navStatus');
+const lang = 'en';
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* optional */ } }
+};
+let running = false, starting = false, model = null, stream = null, wakeLock = null, resumeOnShow = false;
+let nav = null, watchId = null, lastPos = null, gpsAcc = null, navLabel = '', routeLine = null, destPos = null;
+const logRows = [['time', 'object', 'confidence', 'position', 'distance', 'metres', 'motion']];
+let lastLog = 0, frames = 0, fpsStart = performance.now();
+const tracker = new Tracker();
+let alertsOn = true, audioCtx = null, lastAlertAt = 0, view = 'main';
+let lastItems = [], walking = false, beta = null, tiltDeg = 0, batt = null, greeted = false;
+const accelBuf = [];
+const pq = new PriorityQueue();
+let curPriority = 9, busyUntil = 0, holdUntil = 0, lastText = '', dialog = false;
+let handsFree = store.get('sv_hf', true), shakeOn = store.get('sv_shake', true), earOn = store.get('sv_ear', true);
+const f0 = store.get('sv_focal', null); if (f0 > 0.3 && f0 < 3) CAM.focal = f0;
+const shaker = makeShakeDetector();
+// Vibration: left = one long, right = two short, ahead = three short, stop = long-long
+const VIB = { left: [300], right: [100, 70, 100], ahead: [100, 70, 100, 70, 100], stop: [600, 100, 600] };
+const hasActivation = () => !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
+
+// ---------- Sound, vibration, speech ----------
+function beep(pan, level) {
+  if (!audioCtx) return;
+  const n = level === 'stop' ? 3 : 1;
+  for (let i = 0; i < n; i++) {
+    const t0 = audioCtx.currentTime + i * 0.16;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain(), p = audioCtx.createStereoPanner();
+    o.frequency.value = level === 'stop' ? 1200 : 880;
+    p.pan.value = pan;                        // -1 = left ear, +1 = right ear
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.5, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+    o.connect(g).connect(p).connect(audioCtx.destination);
+    o.start(t0); o.stop(t0 + 0.14);
+  }
+}
+function voiceFor(tag) {
+  const vs = speechSynthesis.getVoices(), t = tag.toLowerCase();
+  return vs.find(v => v.lang.replace('_', '-').toLowerCase() === t) || vs.find(v => v.lang.toLowerCase().startsWith(t.slice(0, 2)));
+}
+function speak(text, urgent = false) {
+  if (!urgent && Date.now() < holdUntil) return false;
+  sayEl.textContent = text;
+  if (!('speechSynthesis' in window)) return false;
+  const synth = window.speechSynthesis;
+  if (urgent) holdUntil = Date.now() + 200;
+  if (synth.speaking) { if (!urgent) return false; synth.cancel(); }
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'en-IN';
+  const v = voiceFor(u.lang); if (v) u.voice = v;
+  setTimeout(() => synth.speak(u), urgent ? 60 : 0);
+  return true;
+}
+function queueSay(text, priority, key, opt = {}) { pq.enqueue({ text, priority, key, ...opt }, performance.now()); pump(); }
+function doSpeak(item) {
+  lastText = item.text; curPriority = item.priority; busyUntil = Date.now() + 300;
+  const urgent = item.priority <= 1;
+  speak(item.text, urgent);
+  if (urgent) holdUntil = Date.now() + 1500;  // normal descriptions wait after a warning
+}
+// Speaks the most important waiting message. Danger can interrupt a less important one.
+function pump() {
+  const now = performance.now();
+  if (Date.now() < busyUntil) return;
+  const speaking = 'speechSynthesis' in window && speechSynthesis.speaking;
+  if (!speaking) curPriority = 9;
+  const top = pq.peek(now);
+  if (!top) return;
+  if (speaking && !(top.priority < curPriority && top.priority <= 1)) return;
+  if (top.priority >= 3 && Date.now() < holdUntil) return;
+  if (dialog && top.priority > 0) return;
+  doSpeak(pq.next(now));
+}
+setInterval(pump, 150);
+
+// ---------- Screens ----------
+function openView(n) {
+  view = n;
+  for (const v of ['main', 'camera', 'map', 'more']) $('view-' + v).classList.toggle('active', v === n);
+  window.scrollTo(0, 0);
+}
+function setHandsFree(on, announce = true) {
+  handsFree = on; store.set('sv_hf', on);
+  $('gesture').hidden = !on;
+  const c = $('modeChip');
+  c.textContent = on ? 'Hands-free ON' : 'Helper mode: buttons';
+  c.classList.toggle('off', !on);
+  c.setAttribute('aria-label', on ? 'Hands-free mode is on. Tap to switch to button mode for a helper' : 'Helper mode is on. Tap to switch back to hands-free');
+  $('voiceLabel').textContent = on ? 'Tap anywhere to speak' : 'Tap and speak';
+  if (announce) queueSay(on ? 'Hands-free mode on. Tap anywhere to speak.' : 'Helper mode. The buttons are active.', 1, 'mode', { ttl: 3000 });
+}
+$('modeChip').addEventListener('click', () => setHandsFree(!handsFree));
+$('mapTile').addEventListener('click', () => showMap());
+$('camTile').addEventListener('click', () => openView('camera'));
+$('moreBtn').addEventListener('click', () => openView('more'));
+for (const id of ['camBack', 'mapBack', 'moreBack']) $(id).addEventListener('click', () => openView('main'));
+
+// ---------- Status chip, hazard tile, zones ----------
+try { if (navigator.getBattery) navigator.getBattery().then(b => { const u = () => { batt = Math.round(b.level * 100); }; u(); b.addEventListener('levelchange', u); }); } catch (e) { /* optional */ }
+function updateChip() {
+  const parts = [running ? 'Camera on' : (starting ? 'Camera starting' : 'Camera off')];
+  if (nav && gpsAcc != null) parts.push(`GPS ±${Math.round(gpsAcc)} m`);
+  $('chipText').textContent = parts.join(' • ');
+  $('chipText2').textContent = batt != null ? `Battery ${batt}%` : '';
+  $('chip').classList.toggle('off', !running);
+}
+setInterval(updateChip, 1000);
+
+function setCalm() {
+  $('hazTile').className = 'tile calm';
+  $('hazTitle').textContent = running ? 'Scanning the path' : 'Camera is off';
+  $('hazSub').textContent = running ? 'Obstacle detection is ON' : 'Say “start camera”';
+  $('hazDist').textContent = '';
+}
+let hazTimer = null;
+function showHazard(al, m) {
+  const where = al.from === 'ahead' ? 'ahead' : `from the ${al.from}`;
+  $('hazTile').className = 'tile ' + (al.level === 'stop' ? 'stop' : 'warn');
+  $('hazTitle').textContent = `Hazard ${where}`;
+  $('hazSub').textContent = `${al.label}${m != null ? ' • ' + m.toFixed(1) + ' m' : ''}\n${al.level === 'stop' ? 'Stop / move slowly' : 'Slow down'}`;
+  $('hazDist').textContent = m != null ? m.toFixed(1) + ' m' : '';
+  if (view !== 'main') { const b = $('hazBar'); b.textContent = alertText(al, lang); b.hidden = false; }
+  clearTimeout(hazTimer);
+  hazTimer = setTimeout(() => { setCalm(); $('hazBar').hidden = true; }, 2500);
+}
+const ZID = { 'far left': 'zFL', left: 'zL', ahead: 'zA', right: 'zR', 'far right': 'zFR' };
+function updateRadar(items) {
+  for (const z in ZID) {
+    const el = $(ZID[z]), val = el.querySelector('.zv');
+    const near = items.filter(a => a.zone === z && !IGNORE.has(a.label)).sort((a, b) => (a.m == null ? 99 : a.m) - (b.m == null ? 99 : b.m))[0];
+    if (!near) { el.className = 'zone'; val.textContent = running ? 'Clear' : '—'; continue; }
+    const lvl = near.m != null && near.m <= 1 ? 'red' : (near.m != null && near.m <= 3 ? 'yellow' : 'seen');
+    el.className = 'zone ' + lvl;
+    val.textContent = (near.m != null ? near.m.toFixed(1) + 'm ' : '') + near.label;
+  }
+}
+function danger(al, m) {
+  showHazard(al, m);
+  queueSay(alertText(al, lang), al.level === 'stop' ? 0 : 1, 'alert:' + al.id, { ttl: 1500 });
+  beep(al.from === 'left' ? -1 : (al.from === 'right' ? 1 : 0), al.level);
+  if (navigator.vibrate) navigator.vibrate(VIB[al.level === 'stop' ? 'stop' : al.from]);
+  const f = $('flash'); f.classList.add('on'); setTimeout(() => f.classList.remove('on'), 700);
+  logRows.push([new Date().toISOString(), al.label, '', al.from, 'ALERT-' + al.level]);
+}
+
+// ---------- Camera and detection ----------
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+  } catch (e) {
+    sayEl.textContent = 'Camera blocked. Allow camera access, and open this page over https.';
+    return false;
+  }
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* optional */ }
+  return true;
+}
+function stopStream() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; video.srcObject = null;
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
+async function loadModel() {
+  if (model) return true;
+  if (typeof cocoSsd === 'undefined') { sayEl.textContent = 'Could not load the detection model. Check your internet connection.'; return false; }
+  sayEl.textContent = 'Loading detection model…';
+  try { model = await cocoSsd.load({ base: 'lite_mobilenet_v2' }); }
+  catch (e) { sayEl.textContent = 'Model failed to load. Check your internet and reload.'; return false; }
+  return true;
+}
+function drawBoxes(items) {
+  const W = video.videoWidth, H = video.videoHeight;
+  if (overlay.width !== W) { overlay.width = W; overlay.height = H; }
+  ctx.clearRect(0, 0, W, H);
+  const fs = Math.max(14, Math.round(W / 28));
+  ctx.font = `600 ${fs}px system-ui, sans-serif`;
+  ctx.lineWidth = Math.max(2, W / 200);
+  for (const p of items) {
+    const [x, y, w, h] = p.bbox;
+    ctx.strokeStyle = '#FFE600'; ctx.strokeRect(x, y, w, h);
+    const t = `${p.label} ${p.m != null ? p.m.toFixed(1) + ' m' : Math.round(p.score * 100) + '%'}`;
+    const tw = ctx.measureText(t).width + 8, lx = Math.max(0, Math.min(x, W - tw));
+    ctx.fillStyle = '#FFE600'; ctx.fillRect(lx, Math.max(0, y - fs - 4), tw, fs + 4);
+    ctx.fillStyle = '#14110a'; ctx.fillText(t, lx + 4, Math.max(fs, y - 6));
+  }
+}
+function announce(items) {
+  for (const a of pickTop(items)) {
+    const pr = proximity(a);
+    queueSay((pr === 0 ? 'Stop! ' : '') + sentenceM(a, a.motion), pr, `obj:${a.label}|${a.zone}`, { cooldown: pr === 0 ? 3000 : 6000, ttl: 2500 });
+  }
+}
+// Camera health: dark, blocked or blurry frames are reported instead of silence.
+const vc = document.createElement('canvas'); vc.width = 64; vc.height = 48;
+const vctx = vc.getContext('2d', { willReadFrequently: true });
+let lastVis = 0, visBad = null, visCount = 0;
+function visTick(now) {
+  if (now - lastVis < 1500) return;
+  lastVis = now;
+  vctx.drawImage(video, 0, 0, 64, 48);
+  const v = visibility(greyStats(vctx.getImageData(0, 0, 64, 48).data, 64, 48));
+  if (v && v === visBad) visCount++; else { visBad = v; visCount = v ? 1 : 0; }
+  if (v && visCount >= 2) queueSay(VIS_TEXT[v], 1, 'vis:' + v, { cooldown: 20000, ttl: 3000 });
+}
+// Phone motion: walking or standing, camera tilt, and shake to speak.
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a) return;
+  const t = performance.now();
+  accelBuf.push({ t, m: Math.hypot(a.x || 0, a.y || 0, a.z || 0) });
+  while (accelBuf.length && t - accelBuf[0].t > 1500) accelBuf.shift();
+  if (shaker.update(a.x || 0, a.y || 0, a.z || 0, t) && shakeOn && !dialog) {
+    if (navigator.vibrate) navigator.vibrate(80);
+    voiceDestination();
+  }
+}
+function onOrient(e) { beta = e.beta; }
+function currentTilt() {
+  if (beta == null) return 0;
+  try { if (screen.orientation && screen.orientation.type.startsWith('landscape')) return 0; } catch (e) { /* optional */ }
+  return Math.max(-30, Math.min(45, 90 - beta));   // upright phone = 0, looking down = positive
+}
+let sensorsOn = false;
+async function enableSensors() {
+  if (sensorsOn) return;
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission();
+    window.addEventListener('devicemotion', onMotion);
+    window.addEventListener('deviceorientation', onOrient);
+    sensorsOn = true;
+  } catch (e) { /* motion sensors are optional */ }
+}
+
+async function loop() {
+  if (!running) return;
+  if (video.readyState >= 2 && video.videoWidth) {
+    let preds = [];
+    try { preds = await model.detect(video, 10, 0.5); } catch (e) { /* skip frame */ }
+    if (!running) return;
+    const W = video.videoWidth, H = video.videoHeight;
+    tiltDeg = currentTilt(); CAM.tiltDeg = tiltDeg;
+    walking = isWalking(accelBuf.map(x => x.m));
+    const raw = preds.map(p => analyze(p, W, H, CAM));
+    const now = performance.now();
+    const tracks = tracker.update(raw, now);
+    const items = tracks.filter(t => t.seen === now).map(t =>
+      ({ ...t.item, m: t.m != null ? t.m : t.item.m, motion: motionOf(t, walking) }));
+    lastItems = items;
+    drawBoxes(items); updateRadar(items); visTick(now);
+    if (alertsOn) {
+      const cands = [];
+      for (const t of tracks) {
+        const al = assess(t);
+        // repeat after 2.5 s, but an escalation from warning to stop is never held back
+        if (al && (now - t.alertedAt > 2500 || (al.level === 'stop' && t.alertedLevel !== 'stop'))) cands.push(al);
+      }
+      const al = pickAlert(cands);
+      if (al && now - lastAlertAt > 600) {
+        const t = tracks.find(t => t.id === al.id);
+        t.alertedAt = now; t.alertedLevel = al.level; lastAlertAt = now;
+        danger(al, t.m != null ? t.m : (t.item && t.item.m));
+      }
+    }
+    if (items.length) announce(items);
+    const t = Date.now();
+    if (t - lastLog > 1000 && items.length && logRows.length < 5000) {
+      lastLog = t;
+      for (const a of items) logRows.push([new Date(t).toISOString(), a.label, a.score.toFixed(2), a.zone, a.dist,
+        a.m != null ? a.m.toFixed(2) : '', a.motion ? a.motion.state : '']);
+    }
+    frames++;
+    const el = (performance.now() - fpsStart) / 1000;
+    if (el >= 2) { $('fps').textContent = `${(frames / el).toFixed(1)} FPS`; frames = 0; fpsStart = performance.now();
+      $('dbg').textContent = `walk:${walking ? 'yes' : 'no'} tilt:${Math.round(tiltDeg)}° f:${CAM.focal.toFixed(2)}`; }
+  }
+  requestAnimationFrame(loop);
+}
+
+// The greeting can only be heard after the first touch, so it waits for one.
+function greet() {
+  if (greeted || !running || !hasActivation()) return;
+  greeted = true;
+  queueSay(handsFree ? 'SmartVision ready. Tap anywhere and say a place or a command.'
+                     : 'SmartVision ready. Tap the blue button and say a place or a command.', 1, 'start', { ttl: 6000 });
+}
+async function start() {
+  if (running || starting) return;
+  starting = true; updateChip();
+  try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch (e) { audioCtx = null; }
+  tracker.tracks = [];
+  await enableSensors();
+  if (!(await startCamera())) { starting = false; updateChip(); return; }
+  if (!(await loadModel())) { stopStream(); starting = false; updateChip(); return; }
+  running = true; starting = false;
+  $('startBtn').textContent = 'Stop camera';
+  setCalm(); updateChip(); greet(); setupMediaSession();
+  requestAnimationFrame(loop);
+}
+function stop(quiet) {
+  running = false; starting = false;
+  stopStream();
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  $('startBtn').textContent = 'Start camera';
+  updateRadar([]); setCalm(); updateChip();
+  if (!quiet) { sayEl.textContent = 'Camera stopped.'; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+}
+// Leaving the app (home button, screen off, closing) releases the camera and resumes when you return.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { if (running) { resumeOnShow = true; stop(true); } }
+  else if (resumeOnShow) { resumeOnShow = false; start().then(() => queueSay('SmartVision resumed.', 1, 'resume', { ttl: 4000 })); }
+});
+window.addEventListener('pagehide', () => { if (running) stop(true); });
+
+$('startBtn').addEventListener('click', () => (running ? stop() : start()));
+$('splash').addEventListener('click', () => {
+  $('splash').hidden = true;
+  try { if (audioCtx) audioCtx.resume(); } catch (e) { /* ignore */ }
+  setupMediaSession();
+  if (!running && !starting) start(); else greet();
+});
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+// ---------- Earphone button (media key) ----------
+let keepAudio = null;
+function silentWav() {
+  const n = 8000, b = new Uint8Array(44 + n), dv = new DataView(b.buffer), w = (o, s) => { for (let i = 0; i < s.length; i++) b[o + i] = s.charCodeAt(i); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + n, true); w(8, 'WAVEfmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true);
+  dv.setUint16(22, 1, true); dv.setUint32(24, 8000, true); dv.setUint32(28, 8000, true); dv.setUint16(32, 1, true);
+  dv.setUint16(34, 8, true); w(36, 'data'); dv.setUint32(40, n, true); b.fill(128, 44);
+  return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+}
+function setupMediaSession() {
+  if (!earOn || !('mediaSession' in navigator)) return;
+  try {
+    if (!keepAudio) { keepAudio = new Audio(silentWav()); keepAudio.loop = true; }
+    keepAudio.play().catch(() => {});
+    navigator.mediaSession.metadata = new MediaMetadata({ title: 'SmartVision', artist: 'Press the earphone button to speak',
+      artwork: [{ src: 'icon-512.png', sizes: '512x512', type: 'image/png' }] });
+    const press = () => { if (keepAudio) keepAudio.play().catch(() => {}); if (!dialog) voiceDestination(); };
+    for (const a of ['play', 'pause', 'nexttrack', 'previoustrack']) navigator.mediaSession.setActionHandler(a, press);
+  } catch (e) { /* optional */ }
+}
+
+// ---------- Touch gestures (hands-free mode): tap = speak, hold = repeat, double tap = stop ----------
+let tapTimer = null, pressTimer = null, longFired = false;
+function repeatLast() { queueSay(lastText || 'Nothing to repeat yet.', 1, 'repeat', { ttl: 2000 }); }
+function stopEverything() {
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (nav) { stopNav(); openView('main'); queueSay('Navigation stopped.', 1, 'navstop', { ttl: 2000 }); }
+}
+const gest = $('gesture');
+gest.addEventListener('pointerdown', () => { longFired = false; pressTimer = setTimeout(() => { longFired = true; if (navigator.vibrate) navigator.vibrate(40); repeatLast(); }, 700); });
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) gest.addEventListener(ev, () => clearTimeout(pressTimer));
+gest.addEventListener('click', () => {
+  if (longFired) { longFired = false; return; }
+  if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; stopEverything(); return; }   // second tap
+  tapTimer = setTimeout(() => { tapTimer = null; if (!dialog) voiceDestination(); }, 300);
+});
+
+// ---------- Buttons ----------
+function calibrate() {
+  const p = lastItems.filter(a => a.label === 'person' && !a.truncated).sort((x, y) => y.hN - x.hN)[0];
+  const f = p && calibrateFocal('person', 2, p);
+  if (!f) { queueSay('Calibration needs one whole person in view, standing 2 metres away.', 1, 'cal', { ttl: 4000 }); return; }
+  CAM.focal = f; store.set('sv_focal', f);
+  queueSay('Calibrated.', 1, 'cal', { ttl: 2000 });
+}
+$('calBtn').addEventListener('click', calibrate);
+$('repeatBtn').addEventListener('click', repeatLast);
+function toggle(id, label, get, set) {
+  $(id).addEventListener('click', () => { const v = !get(); set(v); $(id).textContent = `${label}: ${v ? 'On' : 'Off'}`; $(id).setAttribute('aria-pressed', String(v)); });
+}
+toggle('alertBtn', 'Alerts', () => alertsOn, v => { alertsOn = v; });
+toggle('shakeBtn', 'Shake to speak', () => shakeOn, v => { shakeOn = v; store.set('sv_shake', v); });
+toggle('earBtn', 'Earphone button', () => earOn, v => { earOn = v; store.set('sv_ear', v); if (v) setupMediaSession(); else if (keepAudio) keepAudio.pause(); });
+$('shakeBtn').textContent = `Shake to speak: ${shakeOn ? 'On' : 'Off'}`; $('shakeBtn').setAttribute('aria-pressed', String(shakeOn));
+$('earBtn').textContent = `Earphone button: ${earOn ? 'On' : 'Off'}`; $('earBtn').setAttribute('aria-pressed', String(earOn));
+const HELP = 'You can say: where am I, repeat, calibrate, show map, show camera, go back, stop navigation, stop camera, start camera, helper mode, hands-free mode, or the name of a place to walk to.';
+$('helpBtn').addEventListener('click', () => queueSay(HELP, 1, 'help', { ttl: 3000 }));
+
+// ---------- Navigation (free OpenStreetMap services) ----------
+function getPosition() {
+  return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(
+    p => res([p.coords.latitude, p.coords.longitude]), rej, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }));
+}
+async function geocode(q, near) {
+  const d = 0.4; // bias results to ~40 km around the user
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1' +
+    `&viewbox=${near[1] - d},${near[0] + d},${near[1] + d},${near[0] - d}&q=${encodeURIComponent(q)}`;
+  const data = await (await fetch(url)).json();
+  if (!data.length) throw new Error('Destination not found');
+  const out = [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+  out.name = data[0].display_name;
+  return out;
+}
+async function getRoute(a, b) {
+  const url = `https://routing.openstreetmap.de/routed-foot/route/v1/foot/${a[1]},${a[0]};${b[1]},${b[0]}?steps=true&overview=full&geometries=geojson`;
+  const data = await (await fetch(url)).json();
+  if (data.code !== 'Ok') throw new Error('No walking route found');
+  const steps = data.routes[0].legs.flatMap(l => l.steps);
+  const g = data.routes[0].geometry;
+  steps.line = g && g.coordinates ? g.coordinates.map(([lon, lat]) => [lat, lon]) : null;
+  return steps;
+}
+function stopNav() {
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null; nav = null; routeLine = null; gpsAcc = null;
+  $('navCard').hidden = true; $('mapNav').hidden = true;
+  if (map) drawRoute();
+}
+function updateNavCard(pos) {
+  if (!nav) return;
+  const rem = pos ? nav.remainingM(pos) : nav.totalM(), total = nav.totalM() || 1;
+  const stepIdx = Math.min(nav.i + 1, nav.steps.length - 1);
+  const toNext = pos ? nav.metresToNext(pos) : Math.round(nav.steps[0].distance || 0);
+  const pct = Math.max(0, Math.min(100, Math.round((1 - rem / total) * 100)));
+  const set = (cls, fn) => document.querySelectorAll(cls).forEach(fn);
+  set('.nv-dest', e => { e.textContent = navLabel; });
+  set('.nv-left', e => { e.textContent = `${distanceText(rem)} left • ${durationText(rem / 1.2)}`; });
+  set('.nv-next', e => { e.textContent = `Next: ${describeStep(nav.steps[stepIdx], lang)}${toNext > 0 && !nav.finished() ? ' in ' + toNext + ' m' : ''}`; });
+  set('.nv-bar', e => { e.style.width = pct + '%'; });
+}
+function beginNav(steps, label, dest) {
+  nav = new Navigator(steps); navLabel = label; routeLine = steps.line || null; destPos = dest || null;
+  $('navCard').hidden = false; $('mapNav').hidden = false;
+  navStatus.textContent = 'Navigating to ' + label;
+  updateNavCard(lastPos);
+  queueSay(nav.first(lang), 2, 'nav', { ttl: 10000 });
+  watchId = navigator.geolocation.watchPosition(p => {
+    if (!nav) return;
+    lastPos = [p.coords.latitude, p.coords.longitude]; gpsAcc = p.coords.accuracy;
+    const msg = nav.update(lastPos, lang);
+    if (msg) {
+      queueSay(msg, 2, 'nav', { ttl: 10000 });
+      if (nav.finished()) { stopNav(); openView('main'); return; }
+    }
+    updateNavCard(lastPos); updateMe();
+  }, () => { navStatus.textContent = 'Lost GPS signal.'; }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+  showMap();   // the map opens by itself when a route starts
+}
+document.querySelectorAll('.stopNav').forEach(b => b.addEventListener('click', () => {
+  stopNav(); openView('main'); navStatus.textContent = 'Navigation stopped.';
+  queueSay('Navigation stopped.', 1, 'navstop', { ttl: 2000 });
+}));
+$('navForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = $('dest').value.trim();
+  if (!q) return;
+  try {
+    navStatus.textContent = 'Finding your location…';
+    const here = await getPosition();
+    navStatus.textContent = 'Finding destination…';
+    const to = await geocode(q, here);
+    navStatus.textContent = 'Planning walking route…';
+    lastPos = here; beginNav(await getRoute(here, to), q, to);
+  } catch (err) {
+    navStatus.textContent = err && err.code === 1 ? 'Location permission denied.' : (err.message || 'Navigation failed.');
+  }
+});
+
+// ---------- Map (Leaflet + OpenStreetMap tiles, loaded only when needed) ----------
+let map = null, meMarker = null, routeLayer = null, destMarker = null, leafletLoading = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(true);
+  if (leafletLoading) return leafletLoading;
+  leafletLoading = new Promise(res => {
+    const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script'); s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    s.onload = () => res(true); s.onerror = () => { leafletLoading = null; res(false); };
+    document.head.appendChild(s);
+  });
+  return leafletLoading;
+}
+function updateMe() {
+  if (!map || !lastPos) return;
+  if (!meMarker) meMarker = L.circleMarker(lastPos, { radius: 9, color: '#fff', weight: 3, fillColor: '#1469e8', fillOpacity: 1 }).addTo(map);
+  else meMarker.setLatLng(lastPos);
+}
+function drawRoute() {
+  if (!map) return;
+  if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+  if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
+  if (routeLine && routeLine.length) {
+    routeLayer = L.polyline(routeLine, { color: '#FFE600', weight: 6 }).addTo(map);
+    if (destPos) destMarker = L.marker(destPos).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+  }
+}
+async function showMap() {
+  openView('map');
+  $('mapMsg').textContent = '';
+  if (!(await loadLeaflet())) { $('mapMsg').textContent = 'The map could not load. Check your internet connection.'; return; }
+  if (!map) {
+    map = L.map('map').setView(lastPos || [13.0827, 80.2707], 16);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map);
+  }
+  setTimeout(() => map.invalidateSize(), 60);
+  drawRoute(); updateMe();
+  if (!lastPos) getPosition().then(p => { lastPos = p; updateMe(); if (!routeLine) map.setView(p, 17); }).catch(() => {});
+}
+
+// ---------- Voice: the app asks, the user speaks, the app confirms ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function sayWait(text) {            // speak and resolve when finished
+  sayEl.textContent = text;
+  return new Promise(res => {
+    if (!('speechSynthesis' in window)) return res();
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-IN';
+    const v = voiceFor(u.lang); if (v) u.voice = v;
+    const done = () => { clearTimeout(tm); setTimeout(res, 250); };
+    const tm = setTimeout(done, 3000 + text.length * 90);
+    u.onend = done; u.onerror = done;
+    setTimeout(() => synth.speak(u), 60);
+  });
+}
+function listen(ms = 7000) {        // resolves with the heard text, or null
+  return new Promise(res => {
+    if (!SR) return res(null);
+    const r = new SR();
+    r.lang = 'en-IN'; r.interimResults = false; r.maxAlternatives = 1;
+    let fin = false;
+    const finish = t => { if (fin) return; fin = true; clearTimeout(tm); try { r.stop(); } catch (e) { /* ignore */ } res(t); };
+    r.onresult = e => finish(e.results[0][0].transcript);
+    r.onerror = () => finish(null);
+    r.onend = () => finish(null);
+    const tm = setTimeout(() => finish(null), ms);
+    try { r.start(); } catch (e) { finish(null); }
+  });
+}
+function setListening(on) {
+  document.querySelectorAll('#voiceBtn,.speakBtn').forEach(b => { b.dataset.state = on ? 'listening' : ''; });
+  $('voiceLabel').textContent = on ? 'Listening…' : (handsFree ? 'Tap anywhere to speak' : 'Tap and speak');
+}
+async function listenWithBeep(ms) {
+  setListening(true); beep(0, 'warn');
+  const t = await listen(ms);
+  setListening(false);
+  return t;
+}
+let heardTimer = null;
+function showHeard(t) {
+  $('heard').textContent = t; clearTimeout(heardTimer);
+  heardTimer = setTimeout(() => { $('heard').textContent = '—'; }, 8000);
+}
+async function askYesNo(prompt) {
+  for (let i = 0; i < 2; i++) {
+    await sayWait(i ? 'Please say yes or no.' : prompt);
+    const a = parseYesNo((await listenWithBeep(6000)) || '');
+    if (a) return a;
+  }
+  return null;
+}
+async function whereAmI() {
+  const here = await getPosition();
+  const d = await (await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&lat=${here[0]}&lon=${here[1]}`)).json();
+  await sayWait(`You are near ${shortName(d.display_name) || 'an unknown place'}.`);
+}
+async function runCommand(c) {
+  switch (c.cmd) {
+    case 'where': return whereAmI();
+    case 'repeat': return sayWait(lastText || 'Nothing to repeat yet.');
+    case 'calibrate': return calibrate();
+    case 'help': return sayWait(HELP);
+    case 'map': showMap(); return sayWait('Map opened.');
+    case 'showcam': openView('camera'); return sayWait('Camera view.');
+    case 'home': openView('main'); return sayWait('Main screen.');
+    case 'helper': setHandsFree(false, false); return sayWait('Helper mode. The buttons are active.');
+    case 'handsfree': setHandsFree(true, false); return sayWait('Hands-free mode on. Tap anywhere to speak.');
+    case 'stopnav': stopNav(); openView('main'); return sayWait('Navigation stopped.');
+    case 'stop':
+      if (nav) { stopNav(); openView('main'); return sayWait('Navigation stopped.'); }
+      if (running) { stop(); return sayWait('Camera stopped.'); }
+      return sayWait('Nothing is running.');
+    case 'stopcam': if (running) { stop(); return sayWait('Camera stopped.'); } return;
+    case 'startcam': return running ? sayWait('The camera is already on.') : start();
+  }
+}
+async function voiceDestination() {
+  if (dialog) return;
+  dialog = true;
+  try {
+    if (!SR) { await sayWait('Voice input is not supported in this browser. Please use Chrome.'); return; }
+    await sayWait(nav ? 'Navigation is on. Say stop to cancel, or say a new destination.' : 'Where do you want to go? Or say a command.');
+    let heard = null;
+    for (let i = 0; i < 2 && !heard; i++) {
+      heard = await listenWithBeep(7000);
+      if (!heard && i === 0) await sayWait('I did not hear you. Please say the place again.');
+    }
+    if (!heard) { await sayWait('Sorry, I could not hear a destination. Tap to try again.'); return; }
+    showHeard(heard);
+    const c = parseCommand(heard);
+    if (c) { await runCommand(c); return; }
+    const place = cleanDestination(heard) || heard;
+    await sayWait(`Looking for ${place}.`);
+    const here = await getPosition(); lastPos = here;
+    const to = await geocode(place, here);
+    const steps = await getRoute(here, to);
+    const meters = steps.reduce((t, st) => t + st.distance, 0);
+    const secs = steps.reduce((t, st) => t + (st.duration || 0), 0) || meters / 1.2;
+    const name = shortName(to.name) || place;
+    const ans = await askYesNo(`${name}. ${distanceText(meters)}, about ${durationText(secs)} walking. Say yes to start, or no to cancel.`);
+    if (ans === 'yes') { stopNav(); await sayWait('Starting navigation.'); beginNav(steps, name, to); }
+    else await sayWait(ans === 'no' ? 'Cancelled. Tap to choose another place.' : 'I did not understand. Cancelled.');
+  } catch (err) {
+    const msg = err && err.code === 1 ? 'Location permission is blocked. Please allow location.'
+      : (err && err.message === 'Destination not found' ? 'I could not find that place. Tap and try again.'
+      : 'Navigation failed. Please check your internet and try again.');
+    navStatus.textContent = msg;
+    await sayWait(msg);
+  } finally { dialog = false; setListening(false); }
+}
+$('voiceBtn').addEventListener('click', voiceDestination);
+document.querySelectorAll('.speakBtn').forEach(b => b.addEventListener('click', voiceDestination));
+
+// ---------- Log export ----------
+$('csvBtn').addEventListener('click', () => {
+  const csv = logRows.map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'smartvision_log.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+});
+
+// ---------- Go ----------
+if ('speechSynthesis' in window) speechSynthesis.getVoices();
+setHandsFree(handsFree, false);
+setCalm();
+if (hasActivation()) $('splash').hidden = true;
+start();   // the camera opens by itself when the app opens
+</script>
+</body>
+</html>
+
+</script>
+</body>
+</html>
