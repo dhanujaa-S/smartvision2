@@ -235,8 +235,8 @@
   <button id="langBtn" type="button" hidden>English</button>
 </section>
 
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script src="tf.min.js"></script>
+<script src="coco-ssd.min.js"></script>
 <script>
 // ==== PURE LOGIC START ====
 // Same rules as the Python modules: position_analysis.py, text_generation.py, navigation.py
@@ -364,6 +364,18 @@ class Navigator {
 // Small table-top items never count as dangers.
 const IGNORE = new Set(['bottle','cup','book','cell phone','laptop','remote','keyboard','mouse',
   'fork','knife','spoon','bowl','wine glass','scissors','toothbrush','vase','clock','tv']);
+
+// Only classes that matter to a walker are kept. The COCO model knows 80 classes (airplane, pizza, ...),
+// and on a dark or odd frame it guesses one of them. Everything not listed here is dropped.
+const WALK_THRESHOLD = {
+  person: 0.55, car: 0.55, bus: 0.55, truck: 0.55, motorcycle: 0.55, bicycle: 0.55,
+  dog: 0.6, cat: 0.6, bench: 0.6, chair: 0.6, couch: 0.6, 'dining table': 0.6, refrigerator: 0.6,
+  'fire hydrant': 0.65, 'stop sign': 0.65, 'parking meter': 0.7, 'traffic light': 0.7,
+  bed: 0.7, toilet: 0.7, 'potted plant': 0.7, suitcase: 0.7, horse: 0.7, cow: 0.7, sheep: 0.7 };
+function believable(pred) {
+  const need = WALK_THRESHOLD[pred.class];
+  return need !== undefined && pred.score >= need;
+}
 
 class Tracker {
   constructor() { this.tracks = []; this.nextId = 1; }
@@ -789,7 +801,7 @@ function danger(al, m) {
 async function startCamera() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15, max: 20 } }, audio: false });
   } catch (e) {
     sayEl.textContent = 'Camera blocked. Allow camera access, and open this page over https.';
     return false;
@@ -806,10 +818,10 @@ function stopStream() {
 }
 async function loadModel() {
   if (model) return true;
-  if (typeof cocoSsd === 'undefined') { sayEl.textContent = 'Could not load the detection model. Check your internet connection.'; return false; }
+  if (typeof cocoSsd === 'undefined') { sayEl.textContent = 'Could not load the detection files. Open the app once with internet, then it works offline.'; return false; }
   sayEl.textContent = 'Loading detection model…';
-  try { model = await cocoSsd.load({ base: 'lite_mobilenet_v2' }); }
-  catch (e) { sayEl.textContent = 'Model failed to load. Check your internet and reload.'; return false; }
+  try { model = await cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: 'model.json' }); }
+  catch (e) { sayEl.textContent = 'Model failed to load. Open the app once with internet and reload.'; return false; }
   return true;
 }
 function drawBoxes(items) {
@@ -877,9 +889,12 @@ async function enableSensors() {
 
 async function loop() {
   if (!running) return;
+  const loopStart = performance.now();
   if (video.readyState >= 2 && video.videoWidth) {
     let preds = [];
-    try { preds = await model.detect(video, 10, 0.5); } catch (e) { /* skip frame */ }
+    const blind = visBad === 'dark' || visBad === 'blocked';   // nothing to see: do not waste battery or guess
+    if (!blind) { try { preds = await model.detect(video, 10, 0.5); } catch (e) { /* skip frame */ } }
+    preds = preds.filter(believable);
     if (!running) return;
     const W = video.videoWidth, H = video.videoHeight;
     tiltDeg = currentTilt(); CAM.tiltDeg = tiltDeg;
@@ -917,8 +932,14 @@ async function loop() {
     if (el >= 2) { $('fps').textContent = `${(frames / el).toFixed(1)} FPS`; frames = 0; fpsStart = performance.now();
       $('dbg').textContent = `walk:${walking ? 'yes' : 'no'} tilt:${Math.round(tiltDeg)}° f:${CAM.focal.toFixed(2)}`; }
   }
-  requestAnimationFrame(loop);
+  // Heat control: busy scene ~7 fps, empty scene ~3 fps, dark/blocked ~1.5 fps; slower again if the phone struggles.
+  const spent = performance.now() - loopStart;
+  inferAvg = inferAvg * 0.8 + spent * 0.2;
+  let gap = (visBad === 'dark' || visBad === 'blocked') ? 650 : (lastItems.length ? 140 : 300);
+  if (inferAvg > 260) gap *= 1.5;
+  setTimeout(() => requestAnimationFrame(loop), Math.max(0, gap - spent));
 }
+let inferAvg = 0;
 
 // The greeting can only be heard after the first touch, so it waits for one.
 function greet() {
@@ -1108,9 +1129,9 @@ function loadLeaflet() {
   if (window.L) return Promise.resolve(true);
   if (leafletLoading) return leafletLoading;
   leafletLoading = new Promise(res => {
-    const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'leaflet.css';
     document.head.appendChild(css);
-    const s = document.createElement('script'); s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    const s = document.createElement('script'); s.src = 'leaflet.js';
     s.onload = () => res(true); s.onerror = () => { leafletLoading = null; res(false); };
     document.head.appendChild(s);
   });
@@ -1127,7 +1148,7 @@ function drawRoute() {
   if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
   if (routeLine && routeLine.length) {
     routeLayer = L.polyline(routeLine, { color: '#FFE600', weight: 6 }).addTo(map);
-    if (destPos) destMarker = L.marker(destPos).addTo(map);
+    if (destPos) destMarker = L.circleMarker(destPos, { radius: 10, color: '#fff', weight: 3, fillColor: '#ff3b4f', fillOpacity: 1 }).addTo(map);
     map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
   }
 }
@@ -1146,6 +1167,9 @@ async function showMap() {
 
 // ---------- Voice: the app asks, the user speaks, the app confirms ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+// Newer Chrome can recognise speech on the phone itself (no internet) once the English pack is installed.
+let localSR = false;
+try { if (SR && SR.available) SR.available({ langs: ['en-IN'], processLocally: true }).then(s => { localSR = (s === 'available' || s === 'readily'); }).catch(() => {}); } catch (e) { /* optional */ }
 function sayWait(text) {            // speak and resolve when finished
   sayEl.textContent = text;
   return new Promise(res => {
@@ -1166,6 +1190,7 @@ function listen(ms = 7000) {        // resolves with the heard text, or null
     if (!SR) return res(null);
     const r = new SR();
     r.lang = 'en-IN'; r.interimResults = false; r.maxAlternatives = 1;
+    if (localSR) { try { r.processLocally = true; } catch (e) { /* older Chrome */ } }
     let fin = false;
     const finish = t => { if (fin) return; fin = true; clearTimeout(tm); try { r.stop(); } catch (e) { /* ignore */ } res(t); };
     r.onresult = e => finish(e.results[0][0].transcript);

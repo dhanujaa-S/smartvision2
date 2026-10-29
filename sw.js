@@ -1,6 +1,8 @@
-// SmartVision service worker: the app opens even with a weak connection.
-const CACHE = 'smartvision-v2';
-const SHELL = ['./', 'index.html', 'manifest.json', 'icon-192.png', 'icon-512.png'];
+// SmartVision service worker: after one visit with internet, detection works offline.
+const CACHE = 'smartvision-v3';
+const SHELL = ['./', 'index.html', 'manifest.json', 'icon-192.png', 'icon-512.png',
+  'tf.min.js', 'coco-ssd.min.js', 'leaflet.js', 'leaflet.css', 'model.json',
+  'group1-shard1of5', 'group1-shard2of5', 'group1-shard3of5', 'group1-shard4of5', 'group1-shard5of5'];
 const LIVE = ['nominatim.openstreetmap.org', 'routing.openstreetmap.de', 'overpass-api.de', 'tile.openstreetmap.org'];
 
 self.addEventListener('install', e => {
@@ -15,14 +17,16 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (LIVE.includes(url.hostname)) return;                 // maps and routes always come live
-  if (req.mode === 'navigate') {                           // page: newest first, cached copy if offline
-    e.respondWith(fetch(req).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put(req, c)); return r; })
-      .catch(() => caches.match(req).then(r => r || caches.match('index.html'))));
+  if (req.mode === 'navigate') {                           // page: cached copy first, so it opens with no internet
+    e.respondWith(caches.match('index.html').then(hit => {
+      const net = fetch(req).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put('index.html', c)); return r; });
+      return hit ? (net.catch(() => {}), hit) : net;
+    }));
     return;
   }
-  e.respondWith(caches.match(req).then(hit => {            // libraries and model files: cache first
-    const net = fetch(req).then(r => { if (r && (r.ok || r.type === 'opaque')) { const c = r.clone(); caches.open(CACHE).then(x => x.put(req, c)); } return r; })
-      .catch(() => hit);
-    return hit || net;
-  }));
+  // libraries and model files: cache only, no re-download (saves data and battery)
+  e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(r => {
+    if (r && r.ok) { const c = r.clone(); caches.open(CACHE).then(x => x.put(req, c)); }
+    return r;
+  })));
 });
