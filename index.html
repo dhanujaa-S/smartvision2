@@ -375,7 +375,7 @@ const WALK_THRESHOLD = {
   'fire hydrant': 0.65, 'stop sign': 0.65, 'parking meter': 0.7, 'traffic light': 0.7,
   bed: 0.7, toilet: 0.7, 'potted plant': 0.7, suitcase: 0.7, horse: 0.7, cow: 0.7, sheep: 0.7,
   // classes from our own trained model (sv_model.onnx); a hazard missed is worse than a false alarm, so these are lower
-  vehicle: 0.5, stairs: 0.45, pothole: 0.4, 'open drain': 0.4, door: 0.5, pole: 0.45 };
+  vehicle: 0.5, stairs: 0.6, pothole: 0.55, 'open drain': 0.55, door: 0.75, pole: 0.6 };
 function believable(pred) {
   const need = WALK_THRESHOLD[pred.class];
   return need !== undefined && pred.score >= need;
@@ -827,9 +827,10 @@ function stopStream() {
 const YS = 320, YN = 2100;
 const YNAMES = ['person', 'vehicle', 'bicycle', 'dog', 'chair', 'table', 'pole', 'door', 'stairs', 'pothole', 'open drain', 'wall_or_gate'];
 // Only classes the model learned well are used. person/bicycle/table/wall have little or no training data: COCO-SSD does those.
-const YTH = { 1: 0.5, 3: 0.5, 4: 0.5, 6: 0.45, 7: 0.5, 8: 0.45, 9: 0.4, 10: 0.4 };
+// vehicle(1), dog(3), chair(4) are left to COCO-SSD: our model has few examples of them and gave false alarms (a dog that was not there).
+const YTH = { 6: 0.6, 7: 0.75, 8: 0.6, 9: 0.55, 10: 0.55 };   // high on purpose: the model never saw 'empty' scenes, so it over-claims
 const Y_USED = Object.keys(YTH).map(Number);
-const COCO_SKIP = new Set(['dog', 'chair']);       // our model does these better
+const COCO_SKIP = new Set();
 const yIn = new Float32Array(3 * YS * YS);
 const yCv = document.createElement('canvas'); yCv.width = YS; yCv.height = YS;
 const yCx = yCv.getContext('2d', { willReadFrequently: true });
@@ -982,7 +983,8 @@ async function loop() {
     const raw = preds.map(p => analyze(p, W, H, CAM));
     const now = performance.now();
     const tracks = tracker.update(raw, now);
-    const items = tracks.filter(t => t.seen === now).map(t =>
+    const items = tracks.filter(t => t.seen === now && t.hist.length >= 2).map(t =>   // seen in 2 frames in a row: no one-frame ghosts
+      
       ({ ...t.item, m: t.m != null ? t.m : t.item.m, motion: motionOf(t, walking) }));
     lastItems = items;
     drawBoxes(items); updateRadar(items); visTick(now);
