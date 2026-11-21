@@ -664,7 +664,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* optional */ } }
 };
-let running = false, starting = false, model = null, ySess = null, cocoTick = 0, cocoPreds = null, cocoAt = 0, detMode = '', stream = null, wakeLock = null, resumeOnShow = false;
+let dbgErr = '', rawY = 0, rawC = 0, running = false, starting = false, model = null, ySess = null, cocoTick = 0, cocoPreds = null, cocoAt = 0, detMode = '', stream = null, wakeLock = null, resumeOnShow = false;
 let nav = null, watchId = null, lastPos = null, gpsAcc = null, navLabel = '', routeLine = null, destPos = null;
 const logRows = [['time', 'object', 'confidence', 'position', 'distance', 'metres', 'motion']];
 let lastLog = 0, frames = 0, fpsStart = performance.now();
@@ -888,11 +888,12 @@ async function loadModel() {
       ort.env.wasm.wasmPaths = './'; ort.env.wasm.numThreads = 1; ort.env.wasm.proxy = false;
       ySess = await ort.InferenceSession.create('sv_model.onnx', { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
       await ySess.run({ images: new ort.Tensor('float32', new Float32Array(3 * YS * YS), [1, 3, YS, YS]) });   // warm-up
-    } catch (e) { ySess = null; console.warn('own model failed', e); }
+    } catch (e) { ySess = null; dbgErr += ' Y-ERR:' + String(e && e.message || e).slice(0, 50); console.warn('own model failed', e); }
   }
+  if (typeof cocoSsd === 'undefined') dbgErr += ' C-missing';
   if (typeof cocoSsd !== 'undefined') {
     try { model = await cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: 'model.json' }); }
-    catch (e) { model = null; console.warn('coco model failed', e); }
+    catch (e) { model = null; dbgErr += ' C-ERR:' + String(e && e.message || e).slice(0, 50); console.warn('coco model failed', e); }
   }
   detMode = (ySess ? 'Y' : '') + (model ? 'C' : '');
   if (!detMode) { sayEl.textContent = 'Could not load the detection files. Open the app once with internet, then it works offline.'; return false; }
@@ -969,10 +970,11 @@ async function loop() {
     const blind = visBad === 'dark' || visBad === 'blocked';   // nothing to see: do not waste battery or guess
     if (blind) cocoPreds = null;
     else {
-      if (ySess) { try { preds = await yoloDetect(video); } catch (e) { /* skip frame */ } }
+      if (ySess) { try { preds = await yoloDetect(video); } catch (e) { dbgErr = ' Y-RUN:' + String(e && e.message || e).slice(0, 40); } }
+      rawY = preds.length;
       // COCO-SSD runs every 3rd frame (saves battery); its last result is reused for about a second
       if (model && (!ySess || cocoTick++ % 3 === 0)) {
-        try { cocoPreds = (await model.detect(video, 10, 0.5)).filter(p => !COCO_SKIP.has(p.class)); cocoAt = performance.now(); } catch (e) { /* skip */ }
+        try { cocoPreds = (await model.detect(video, 10, 0.5)).filter(p => !COCO_SKIP.has(p.class)); cocoAt = performance.now(); rawC = cocoPreds.length; } catch (e) { dbgErr = ' C-RUN:' + String(e && e.message || e).slice(0, 40); }
       }
       if (cocoPreds && performance.now() - cocoAt < 1100) preds = preds.concat(cocoPreds);
       preds = mergePreds(preds);
@@ -1018,7 +1020,7 @@ async function loop() {
     frames++;
     const el = (performance.now() - fpsStart) / 1000;
     if (el >= 2) { $('fps').textContent = `${(frames / el).toFixed(1)} FPS`; frames = 0; fpsStart = performance.now();
-      $('dbg').textContent = `walk:${walking ? 'yes' : 'no'} tilt:${Math.round(tiltDeg)}° f:${CAM.focal.toFixed(2)} m:${detMode}`; }
+      $('dbg').textContent = `walk:${walking ? 'yes' : 'no'} tilt:${Math.round(tiltDeg)}° f:${CAM.focal.toFixed(2)} m:${detMode} y:${rawY} c:${rawC}${dbgErr}`; }
   }
   // Heat control: busy scene ~7 fps, empty scene ~3 fps, dark/blocked ~1.5 fps; slower again if the phone struggles.
   const spent = performance.now() - loopStart;
