@@ -375,7 +375,7 @@ const WALK_THRESHOLD = {
   'fire hydrant': 0.65, 'stop sign': 0.65, 'parking meter': 0.7, 'traffic light': 0.7,
   bed: 0.7, toilet: 0.7, 'potted plant': 0.7, suitcase: 0.7, horse: 0.7, cow: 0.7, sheep: 0.7,
   // classes from our own trained model (sv_model.onnx); a hazard missed is worse than a false alarm, so these are lower
-  vehicle: 0.5, stairs: 0.6, pothole: 0.55, 'open drain': 0.55, door: 0.75, pole: 0.6 };
+  vehicle: 0.5, stairs: 0.7, pothole: 0.6, 'open drain': 0.6, door: 0.75, pole: 0.6 };
 function believable(pred) {
   const need = WALK_THRESHOLD[pred.class];
   return need !== undefined && pred.score >= need;
@@ -542,7 +542,9 @@ function sentenceM(a, motion) {
   return `${a.label}${verb} ${ZONE_TEXT[a.zone]}, ${dist}`;
 }
 // Priority of a plain object by how close it is in the walking path: 0 stop, 1 warning, else 3.
-const HAZARD = new Set(['stairs', 'pothole', 'open drain']);      // ground hazards: warn earlier (you cannot see them with a cane)
+const GROUND = new Set(['stairs', 'pothole', 'open drain']);
+const OWN = new Set(['stairs', 'pothole', 'open drain', 'door', 'pole']);       // from our own model: must be seen in 4 frames in a row
+const HAZARD = GROUND;      // ground hazards: warn earlier (you cannot see them with a cane)
 function proximity(a) {
   if (IGNORE.has(a.label) || a.m == null || a.horiz !== 'center') return 3;
   const k = HAZARD.has(a.label) ? 1.5 : 1.0;
@@ -828,7 +830,7 @@ const YS = 320, YN = 2100;
 const YNAMES = ['person', 'vehicle', 'bicycle', 'dog', 'chair', 'table', 'pole', 'door', 'stairs', 'pothole', 'open drain', 'wall_or_gate'];
 // Only classes the model learned well are used. person/bicycle/table/wall have little or no training data: COCO-SSD does those.
 // vehicle(1), dog(3), chair(4) are left to COCO-SSD: our model has few examples of them and gave false alarms (a dog that was not there).
-const YTH = { 6: 0.6, 7: 0.75, 8: 0.6, 9: 0.55, 10: 0.55 };   // high on purpose: the model never saw 'empty' scenes, so it over-claims
+const YTH = { 6: 0.6, 7: 0.75, 8: 0.7, 9: 0.6, 10: 0.6 };   // high on purpose: the model never saw 'empty' scenes, so it over-claims
 const Y_USED = Object.keys(YTH).map(Number);
 const COCO_SKIP = new Set();
 const yIn = new Float32Array(3 * YS * YS);
@@ -976,6 +978,10 @@ async function loop() {
       preds = mergePreds(preds);
     }
     preds = preds.filter(believable);
+    {   // ground hazards lie on the floor ahead: a 'staircase' in the upper half of the picture is a laptop keyboard, a shelf, a fence...
+      const vh = video.videoHeight || 1;
+      preds = preds.filter(p => !GROUND.has(p.class) || (p.bbox[1] + p.bbox[3] / 2) / vh >= 0.45);
+    }
     if (!running) return;
     const W = video.videoWidth, H = video.videoHeight;
     tiltDeg = currentTilt(); CAM.tiltDeg = tiltDeg;
@@ -983,7 +989,7 @@ async function loop() {
     const raw = preds.map(p => analyze(p, W, H, CAM));
     const now = performance.now();
     const tracks = tracker.update(raw, now);
-    const items = tracks.filter(t => t.seen === now && t.hist.length >= 2).map(t =>   // seen in 2 frames in a row: no one-frame ghosts
+    const items = tracks.filter(t => t.seen === now && t.hist.length >= (OWN.has(t.label) ? 4 : 2)).map(t =>   // seen in 2 frames in a row: no one-frame ghosts
       
       ({ ...t.item, m: t.m != null ? t.m : t.item.m, motion: motionOf(t, walking) }));
     lastItems = items;
