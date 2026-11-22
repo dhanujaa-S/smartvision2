@@ -1,5 +1,5 @@
 // SmartVision service worker: after one visit with internet, detection works offline.
-const CACHE = 'smartvision-v4';
+const CACHE = 'smartvision-v5';
 const SHELL = ['./', 'index.html', 'manifest.json', 'icon-192.png', 'icon-512.png',
   'tf.min.js', 'coco-ssd.min.js', 'leaflet.js', 'leaflet.css', 'model.json',
   'group1-shard1of5', 'group1-shard2of5', 'group1-shard3of5', 'group1-shard4of5', 'group1-shard5of5',
