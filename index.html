@@ -375,7 +375,7 @@ const WALK_THRESHOLD = {
   'fire hydrant': 0.65, 'stop sign': 0.65, 'parking meter': 0.7, 'traffic light': 0.7,
   bed: 0.7, toilet: 0.7, 'potted plant': 0.7, suitcase: 0.7, horse: 0.7, cow: 0.7, sheep: 0.7,
   // classes from our own trained model (sv_model.onnx); a hazard missed is worse than a false alarm, so these are lower
-  vehicle: 0.5, stairs: 0.7, pothole: 0.6, 'open drain': 0.6, door: 0.75, pole: 0.6 };
+  vehicle: 0.5, stairs: 0.65, pothole: 0.5, 'open drain': 0.5, door: 0.6, pole: 0.5 };
 function believable(pred) {
   const need = WALK_THRESHOLD[pred.class];
   return need !== undefined && pred.score >= need;
@@ -543,7 +543,7 @@ function sentenceM(a, motion) {
 }
 // Priority of a plain object by how close it is in the walking path: 0 stop, 1 warning, else 3.
 const GROUND = new Set(['stairs', 'pothole', 'open drain']);
-const OWN = new Set(['stairs', 'pothole', 'open drain', 'door', 'pole']);       // from our own model: must be seen in 4 frames in a row
+const OWN = new Set(['stairs', 'pothole', 'open drain', 'door', 'pole']);       // from our own model: must be seen in 3 frames in a row
 const HAZARD = GROUND;      // ground hazards: warn earlier (you cannot see them with a cane)
 function proximity(a) {
   if (IGNORE.has(a.label) || a.m == null || a.horiz !== 'center') return 3;
@@ -827,11 +827,12 @@ function stopStream() {
 }
 // ---- Our own trained model (YOLOv8n, ONNX, runs offline in the browser) + COCO-SSD for person, bicycle, table... ----
 const YS = 320, YN = 2100;
-const YNAMES = ['person', 'vehicle', 'bicycle', 'dog', 'chair', 'table', 'pole', 'door', 'stairs', 'pothole', 'open drain', 'wall_or_gate'];
-// Only classes the model learned well are used. person/bicycle/table/wall have little or no training data: COCO-SSD does those.
-// vehicle(1), dog(3), chair(4) are left to COCO-SSD: our model has few examples of them and gave false alarms (a dog that was not there).
-const YTH = { 6: 0.6, 7: 0.75, 8: 0.7, 9: 0.6, 10: 0.6 };   // high on purpose: the model never saw 'empty' scenes, so it over-claims
+const YNAMES = ['person', 'vehicle', 'bicycle', 'dog', 'chair', 'table', 'pole', 'door', 'stairs', 'pothole', 'open drain', 'wall_or_gate'].map((n, i) => (i === 5 ? 'dining table' : n));
+// v3 model: trained with ~4,000 photos incl. 700 background photos. COCO-SSD still runs beside it (every 3rd frame); the more confident one wins.
+// idx: 0 person 1 vehicle 2 bicycle 3 dog 4 chair 5 table 6 pole 7 door 8 stairs 9 pothole 10 open drain (11 wall_or_gate has no training data)
+const YTH = { 0: 0.5, 1: 0.5, 2: 0.5, 3: 0.6, 4: 0.5, 5: 0.5, 6: 0.5, 7: 0.6, 8: 0.65, 9: 0.5, 10: 0.5 };
 const Y_USED = Object.keys(YTH).map(Number);
+const YLABEL = { 5: 'dining table' };            // the app knows COCO's name for it
 const COCO_SKIP = new Set();
 const yIn = new Float32Array(3 * YS * YS);
 const yCv = document.createElement('canvas'); yCv.width = YS; yCv.height = YS;
@@ -991,7 +992,7 @@ async function loop() {
     const raw = preds.map(p => analyze(p, W, H, CAM));
     const now = performance.now();
     const tracks = tracker.update(raw, now);
-    const items = tracks.filter(t => t.seen === now && t.hist.length >= (OWN.has(t.label) ? 4 : 2)).map(t =>   // seen in 2 frames in a row: no one-frame ghosts
+    const items = tracks.filter(t => t.seen === now && t.hist.length >= (OWN.has(t.label) ? 3 : 2)).map(t =>   // seen in 2 frames in a row: no one-frame ghosts
       
       ({ ...t.item, m: t.m != null ? t.m : t.item.m, motion: motionOf(t, walking) }));
     lastItems = items;
