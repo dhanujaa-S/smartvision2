@@ -291,7 +291,7 @@ function sentenceFor(a, lang) {
 function pickTop(items, n = 2) {
   const rank = { near: 0, medium: 1, far: 2 };
   return items.slice().sort((a, b) =>
-    rank[a.dist] - rank[b.dist] || Math.abs(a.cx - 0.5) - Math.abs(b.cx - 0.5)
+    (IGNORE.has(a.label) ? 5 : 0) + rank[a.dist] - (IGNORE.has(b.label) ? 5 : 0) - rank[b.dist] || Math.abs(a.cx - 0.5) - Math.abs(b.cx - 0.5)   // small items never crowd out real obstacles
   ).slice(0, n);
 }
 
@@ -375,7 +375,9 @@ const WALK_THRESHOLD = {
   'fire hydrant': 0.65, 'stop sign': 0.65, 'parking meter': 0.7, 'traffic light': 0.7,
   bed: 0.7, toilet: 0.7, 'potted plant': 0.7, suitcase: 0.7, horse: 0.7, cow: 0.7, sheep: 0.7,
   // classes from our own trained model (sv_model.onnx); a hazard missed is worse than a false alarm, so these are lower
-  vehicle: 0.5, stairs: 0.65, pothole: 0.5, 'open drain': 0.5, door: 0.6, pole: 0.5 };
+  vehicle: 0.5, stairs: 0.65, pothole: 0.5, 'open drain': 0.5, door: 0.6, pole: 0.5,
+  // everyday items: named at low priority (never 'Stop!', they are in IGNORE), with high thresholds so odd guesses are dropped
+  tv: 0.6, laptop: 0.6, 'cell phone': 0.65, bottle: 0.65, cup: 0.65, keyboard: 0.65, book: 0.7 };
 function believable(pred) {
   const need = WALK_THRESHOLD[pred.class];
   return need !== undefined && pred.score >= need;
