@@ -899,7 +899,17 @@ async function loadModel() {
   sayEl.textContent = 'Loading detection models…';
   if (typeof ort === 'undefined') { dbgErr += ' ORT-missing'; }
   else {
-    ort.env.wasm.wasmPaths = './'; ort.env.wasm.numThreads = 1; ort.env.wasm.proxy = false;
+    ort.env.wasm.wasmPaths = './'; ort.env.wasm.proxy = false;
+    // Several CPU threads once the service worker has isolated the page. Safety net: if the threaded start ever hangs
+    // or fails, the flag below stays set, and the next start (automatic reload) falls back to 1 thread for good.
+    let ls = { getItem: () => null, setItem() {}, removeItem() {} }; try { ls = localStorage; } catch (e) {}
+    const bad = ls.getItem('svThreads') === 'bad' || ls.getItem('svThreads') === 'try';
+    if (ls.getItem('svThreads') === 'try') ls.setItem('svThreads', 'bad');
+    const want = self.crossOriginIsolated && !bad ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)) : 1;
+    ort.env.wasm.numThreads = want;
+    dbgErr += ' t' + want;
+    let wd = null;
+    if (want > 1) { ls.setItem('svThreads', 'try'); wd = setTimeout(() => { ls.setItem('svThreads', 'bad'); location.reload(); }, 45000); }
     const warm = new ort.Tensor('float32', new Float32Array(3 * YS * YS), [1, 3, YS, YS]);
     const mk = async (file, tag) => {
       try { const s = await ort.InferenceSession.create(file, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' }); await s.run({ images: warm }); return s; }
@@ -907,6 +917,7 @@ async function loadModel() {
     };
     ySess = await mk('sv_model.onnx', 'Y');
     cSess = await mk('sv_coco.onnx', 'C');
+    if (wd) { clearTimeout(wd); if (ySess && cSess) ls.setItem('svThreads', 'ok'); else ls.setItem('svThreads', 'bad'); }
   }
   detMode = (ySess ? 'Y' : '') + (cSess ? 'C' : '');
   if (!detMode) { sayEl.textContent = 'Could not load the detection files. Open the app once with internet, then it works offline.'; return false; }
@@ -986,11 +997,11 @@ async function loop() {
       try { yPrep(video); } catch (e) { dbgErr = ' PREP:' + String(e && e.message || e).slice(0, 40); }
       if (ySess) { try { preds = await yRun(ySess, YNAMES, YALLOW, 'y'); } catch (e) { dbgErr = ' Y-RUN:' + String(e && e.message || e).slice(0, 40); } }
       rawY = preds.length;
-      // the 80-class model runs on every 2nd frame (saves battery); its last result is reused for under a second
-      if (cSess && (!ySess || cocoTick++ % 2 === 0)) {
+      // the 80-class model runs on every 3rd frame (saves battery and time); its last result is reused for about a second
+      if (cSess && (!ySess || cocoTick++ % 3 === 0)) {
         try { cocoPreds = await yRun(cSess, CNAMES, CALLOW, 'c'); cocoAt = performance.now(); rawC = cocoPreds.length; } catch (e) { dbgErr = ' C-RUN:' + String(e && e.message || e).slice(0, 40); }
         if (cocoPreds) preds = preds.concat(cocoPreds.map(p => ({ ...p, stale: false })));
-      } else if (cocoPreds && performance.now() - cocoAt < 800) preds = preds.concat(cocoPreds.map(p => ({ ...p, stale: true })));
+      } else if (cocoPreds && performance.now() - cocoAt < 1100) preds = preds.concat(cocoPreds.map(p => ({ ...p, stale: true })));
       preds = mergePreds(preds);
     }
     preds = preds.filter(believable);
@@ -1087,7 +1098,13 @@ $('splash').addEventListener('click', () => {
   setupMediaSession();
   if (!running && !starting) start(); else greet();
 });
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready).then(() => {
+    // first visit: the worker has just taken over, reload once so the page is isolated (multi-thread model = faster)
+    let done = false; try { done = sessionStorage.getItem('svIso') === '1'; } catch (e) { done = true; }
+    if (!self.crossOriginIsolated && !done && !running && !starting) { try { sessionStorage.setItem('svIso', '1'); } catch (e) {} location.reload(); }
+  }).catch(() => {});
+}
 
 // ---------- Earphone button (media key) ----------
 let keepAudio = null;
