@@ -1,5 +1,5 @@
 // SmartVision service worker: after one visit with internet, detection works offline.
-const CACHE = 'smartvision-v7';
+const CACHE = 'smartvision-v8';
 const SHELL = ['./', 'index.html', 'manifest.json', 'icon-192.png', 'icon-512.png',
   'leaflet.js', 'leaflet.css',
   'ort.wasm.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm', 'sv_model.onnx', 'sv_coco.onnx'];
@@ -31,13 +31,13 @@ self.addEventListener('fetch', e => {
   if (req.mode === 'navigate') {                           // page: cached copy first, so it opens with no internet
     e.respondWith(caches.match('index.html').then(hit => {
       const net = fetch(req).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put('index.html', c)); return r; });
-      return (hit ? (net.catch(() => {}), hit) : net).then(r => iso(r, url));
-    }));
+      return Promise.resolve(hit ? (net.catch(() => {}), hit) : net).then(r => iso(r, url));
+    }).catch(() => fetch(req)));
     return;
   }
   // libraries and model files: cache only, no re-download (saves data and battery)
   e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(r => {
     if (r && r.ok) { const c = r.clone(); caches.open(CACHE).then(x => x.put(req, c)); }
     return r;
-  })).then(r => iso(r, url)));
+  })).then(r => iso(r, url)).catch(() => fetch(req)));
 });
