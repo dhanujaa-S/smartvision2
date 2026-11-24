@@ -231,6 +231,14 @@
     <button id="helpBtn" class="opt" type="button">Voice commands</button>
     <button id="csvBtn" class="opt" type="button">Save log (CSV)</button>
   </div>
+  <div class="row">
+    <input id="sosNum" type="tel" inputmode="tel" placeholder="Emergency contact number" autocomplete="off" aria-label="Emergency contact phone number">
+    <button id="sosSave" class="opt" type="button">Save contact</button>
+  </div>
+  <div class="row">
+    <button id="fallBtn" class="opt" type="button" aria-pressed="true">Fall alert: On</button>
+    <button id="sosNow" class="opt" type="button">Send SOS now</button>
+  </div>
   <div class="row"><span id="fps"></span><span id="dbg"></span></div>
   <button id="langBtn" type="button" hidden>English</button>
 </section>
@@ -623,6 +631,8 @@ function durationText(sec) {
 }
 function parseCommand(t) {
   const s = String(t).toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/\b(sos|s o s|emergency|help me|i need help|i have fallen|i fell down)\b/.test(s)) return { cmd: 'sos' };
+  if (/\bbattery\b/.test(s)) return { cmd: 'battery' };
   if (/\b(where am i|my location|current location|where i am)\b/.test(s)) return { cmd: 'where' };
   if (/\b(repeat|say that again|say again)\b/.test(s)) return { cmd: 'repeat' };
   if (/\bcalibrat/.test(s)) return { cmd: 'calibrate' };
@@ -637,6 +647,31 @@ function parseCommand(t) {
   if (/\b(main screen|go back|back to main)\b/.test(s)) return { cmd: 'home' };
   if (/\b(show|open|view)\b.*\bmap\b|^map$/.test(s)) return { cmd: 'map' };
   return null;
+}
+// ---- Fall detector: free fall (near 0 g) -> hard hit -> phone lying still. Pure logic, tested without a phone. ----
+function makeFallDetector(o = {}) {
+  const freeG = o.freeG || 3, hitG = o.hitG || 28, minFree = o.minFreeMs || 120, maxGap = o.maxGapMs || 1200,
+        stillDev = o.stillDev || 3, stillFrom = o.stillFromMs || 500, stillTo = o.stillToMs || 2200, cool = o.cooldownMs || 15000;
+  let lowAt = 0, hitAt = 0, still = [], last = -1e9;
+  return {
+    update(m, t) {
+      if (t - last < cool) return false;
+      if (!hitAt) {
+        if (m < freeG) { if (!lowAt) lowAt = t; return false; }
+        if (lowAt && t - lowAt >= minFree && t - lowAt <= maxGap && m > hitG) { hitAt = t; still = []; }
+        lowAt = 0;
+        return false;
+      }
+      const dt = t - hitAt;
+      if (dt >= stillFrom) still.push(Math.abs(m - 9.8));
+      if (dt >= stillTo) {
+        const ok = still.length > 5 && Math.max(...still) < stillDev;
+        hitAt = 0; still = [];
+        if (ok) { last = t; return true; }
+      }
+      return false;
+    }
+  };
 }
 function shortName(n) { return String(n || '').split(',').slice(0, 2).join(',').trim(); }
 
@@ -678,6 +713,8 @@ let curPriority = 9, busyUntil = 0, holdUntil = 0, lastText = '', dialog = false
 let handsFree = store.get('sv_hf', true), shakeOn = store.get('sv_shake', true), earOn = store.get('sv_ear', true);
 const f0 = store.get('sv_focal', null); if (f0 > 0.3 && f0 < 3) CAM.focal = f0;
 const shaker = makeShakeDetector();
+const faller = makeFallDetector();
+let fallOn = store.get('sv_fall', true), sosBusy = false;
 // Vibration: left = one long, right = two short, ahead = three short, stop = long-long
 const VIB = { left: [300], right: [100, 70, 100], ahead: [100, 70, 100, 70, 100], stop: [600, 100, 600] };
 const hasActivation = () => !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
@@ -760,7 +797,18 @@ $('moreBtn').addEventListener('click', () => openView('more'));
 for (const id of ['camBack', 'mapBack', 'moreBack']) $(id).addEventListener('click', () => openView('main'));
 
 // ---------- Status chip, hazard tile, zones ----------
-try { if (navigator.getBattery) navigator.getBattery().then(b => { const u = () => { batt = Math.round(b.level * 100); }; u(); b.addEventListener('levelchange', u); }); } catch (e) { /* optional */ }
+const battWarned = new Set(); let battCharging = false;
+function batteryCheck() {
+  if (battCharging) { battWarned.clear(); return; }
+  for (const lv of [5, 10, 20]) {
+    if (batt != null && batt <= lv && !battWarned.has(lv)) {
+      for (const x of [5, 10, 20]) if (x >= lv) battWarned.add(x);   // do not repeat the higher warnings
+      queueSay(`Battery ${batt} percent. Please charge your phone.`, 1, 'batt' + lv, { ttl: 8000 });
+      break;
+    }
+  }
+}
+try { if (navigator.getBattery) navigator.getBattery().then(b => { const u = () => { batt = Math.round(b.level * 100); battCharging = b.charging; batteryCheck(); }; u(); b.addEventListener('levelchange', u); b.addEventListener('chargingchange', u); }); } catch (e) { /* optional */ }
 function updateChip() {
   const parts = [running ? 'Camera on' : (starting ? 'Camera starting' : 'Camera off')];
   if (nav && gpsAcc != null) parts.push(`GPS ±${Math.round(gpsAcc)} m`);
@@ -962,7 +1010,9 @@ function onMotion(e) {
   const a = e.accelerationIncludingGravity;
   if (!a) return;
   const t = performance.now();
-  accelBuf.push({ t, m: Math.hypot(a.x || 0, a.y || 0, a.z || 0) });
+  const mag = Math.hypot(a.x || 0, a.y || 0, a.z || 0);
+  if (fallOn && faller.update(mag, t) && !dialog && !sosBusy) fallCheck();
+  accelBuf.push({ t, m: mag });
   while (accelBuf.length && t - accelBuf[0].t > 1500) accelBuf.shift();
   if (shaker.update(a.x || 0, a.y || 0, a.z || 0, t) && shakeOn && !dialog) {
     if (navigator.vibrate) navigator.vibrate(80);
@@ -1161,8 +1211,59 @@ toggle('shakeBtn', 'Shake to speak', () => shakeOn, v => { shakeOn = v; store.se
 toggle('earBtn', 'Earphone button', () => earOn, v => { earOn = v; store.set('sv_ear', v); if (v) setupMediaSession(); else if (keepAudio) keepAudio.pause(); });
 $('shakeBtn').textContent = `Shake to speak: ${shakeOn ? 'On' : 'Off'}`; $('shakeBtn').setAttribute('aria-pressed', String(shakeOn));
 $('earBtn').textContent = `Earphone button: ${earOn ? 'On' : 'Off'}`; $('earBtn').setAttribute('aria-pressed', String(earOn));
-const HELP = 'You can say: where am I, repeat, calibrate, show map, show camera, go back, stop navigation, stop camera, start camera, helper mode, hands-free mode, or the name of a place to walk to.';
+const HELP = 'You can say: where am I, repeat, calibrate, show map, show camera, go back, stop navigation, stop camera, start camera, battery, S O S, helper mode, hands-free mode, or the name of a place to walk to.';
 $('helpBtn').addEventListener('click', () => queueSay(HELP, 1, 'help', { ttl: 3000 }));
+
+// ---------- Emergency: SOS, fall check, battery ----------
+function siren(ms) {
+  if (!audioCtx) return;
+  const t0 = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = 'square'; g.gain.value = 0.35;
+  for (let i = 0; i * 0.4 < ms / 1000; i++) o.frequency.setValueAtTime(i % 2 ? 1000 : 700, t0 + i * 0.4);
+  o.connect(g).connect(audioCtx.destination); o.start(t0); o.stop(t0 + ms / 1000);
+}
+const sosContact = () => String(store.get('sv_sos', '') || '').replace(/[^\d+]/g, '');
+async function sendSOS(reason) {
+  if (sosBusy) return;
+  sosBusy = true;
+  try {
+    if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
+    siren(6000);
+    await sayWait('SOS. Getting your location.');
+    let link = '';
+    try {
+      const p = await Promise.race([getPosition(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 8000))]);
+      link = ` My location: https://maps.google.com/?q=${p[0].toFixed(6)},${p[1].toFixed(6)}`;
+    } catch (e) { link = ' My location could not be found.'; }
+    const msg = `SOS! I need help.${reason ? ' ' + reason : ''}${link}`;
+    const num = sosContact();
+    if (num) {
+      await sayWait('Opening the message to your emergency contact. Ask someone nearby to press send.');
+      location.href = `sms:${num}?body=${encodeURIComponent(msg)}`;
+    } else if (navigator.share) {
+      try { await navigator.share({ text: msg }); } catch (e) { /* cancelled */ }
+    } else {
+      await sayWait('No emergency contact is saved. Open More options and save a phone number.');
+    }
+  } finally { setTimeout(() => { sosBusy = false; }, 10000); }
+}
+async function fallCheck() {
+  if (dialog) return;
+  dialog = true;
+  try {
+    if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+    await sayWait('I felt a hard fall. Are you okay? Say I am fine. If I hear nothing, I will send an SOS.');
+    const heard = (await listenWithBeep(8000)) || '';
+    showHeard(heard || '—');
+    if (/\b(fine|ok|okay|good|safe|yes)\b/i.test(heard) && !/\b(not|no|help)\b/i.test(heard)) { await sayWait('Okay. Glad you are fine.'); return; }
+    await sendSOS('A hard fall was detected.');
+  } finally { dialog = false; setListening(false); }
+}
+$('sosNum').value = store.get('sv_sos', '') || '';
+$('sosSave').addEventListener('click', () => { store.set('sv_sos', $('sosNum').value.trim()); queueSay($('sosNum').value.trim() ? 'Emergency contact saved.' : 'Emergency contact cleared.', 1, 'sos', { ttl: 3000 }); });
+$('sosNow').addEventListener('click', () => sendSOS('Test message.'));
+toggle('fallBtn', 'Fall alert', () => fallOn, v => { fallOn = v; store.set('sv_fall', v); });
+$('fallBtn').textContent = `Fall alert: ${fallOn ? 'On' : 'Off'}`; $('fallBtn').setAttribute('aria-pressed', String(fallOn));
 
 // ---------- Navigation (free OpenStreetMap services) ----------
 function getPosition() {
@@ -1352,6 +1453,8 @@ async function whereAmI() {
 async function runCommand(c) {
   switch (c.cmd) {
     case 'where': return whereAmI();
+    case 'sos': return sendSOS('');
+    case 'battery': return sayWait(batt != null ? `Battery is ${batt} percent.` : 'Battery level is not available on this phone.');
     case 'repeat': return sayWait(lastText || 'Nothing to repeat yet.');
     case 'calibrate': return calibrate();
     case 'help': return sayWait(HELP);
