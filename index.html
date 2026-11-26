@@ -633,6 +633,7 @@ function parseCommand(t) {
   const s = String(t).toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
   if (/\b(sos|s o s|emergency|help me|i need help|i have fallen|i fell down)\b/.test(s)) return { cmd: 'sos' };
   if (/\bbattery\b/.test(s)) return { cmd: 'battery' };
+  if (/\b(how far|how long|distance left|time left|how much longer|remaining)\b/.test(s)) return { cmd: 'navinfo' };
   if (/\b(where am i|my location|current location|where i am)\b/.test(s)) return { cmd: 'where' };
   if (/\b(repeat|say that again|say again)\b/.test(s)) return { cmd: 'repeat' };
   if (/\bcalibrat/.test(s)) return { cmd: 'calibrate' };
@@ -672,6 +673,21 @@ function makeFallDetector(o = {}) {
       return false;
     }
   };
+}
+// ---- Off-route check: shortest distance (metres) from a point to a walking route (list of [lat, lon]) ----
+function distToLine(p, line) {
+  if (!line || !line.length) return 0;
+  const k = Math.cos(p[0] * Math.PI / 180), M = 111320;
+  const X = q => (q[1] - p[1]) * k * M, Y = q => (q[0] - p[0]) * M;
+  let best = Infinity;
+  for (let i = 0; i < line.length; i++) {
+    const ax = X(line[i]), ay = Y(line[i]);
+    if (i === line.length - 1) { best = Math.min(best, Math.hypot(ax, ay)); break; }
+    const bx = X(line[i + 1]), by = Y(line[i + 1]), dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0;
+    best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+  }
+  return best;
 }
 function shortName(n) { return String(n || '').split(',').slice(0, 2).join(',').trim(); }
 
@@ -1211,7 +1227,7 @@ toggle('shakeBtn', 'Shake to speak', () => shakeOn, v => { shakeOn = v; store.se
 toggle('earBtn', 'Earphone button', () => earOn, v => { earOn = v; store.set('sv_ear', v); if (v) setupMediaSession(); else if (keepAudio) keepAudio.pause(); });
 $('shakeBtn').textContent = `Shake to speak: ${shakeOn ? 'On' : 'Off'}`; $('shakeBtn').setAttribute('aria-pressed', String(shakeOn));
 $('earBtn').textContent = `Earphone button: ${earOn ? 'On' : 'Off'}`; $('earBtn').setAttribute('aria-pressed', String(earOn));
-const HELP = 'You can say: where am I, repeat, calibrate, show map, show camera, go back, stop navigation, stop camera, start camera, battery, S O S, helper mode, hands-free mode, or the name of a place to walk to.';
+const HELP = 'You can say: where am I, repeat, calibrate, show map, show camera, go back, stop navigation, stop camera, start camera, battery, how far, S O S, helper mode, hands-free mode, or the name of a place to walk to.';
 $('helpBtn').addEventListener('click', () => queueSay(HELP, 1, 'help', { ttl: 3000 }));
 
 // ---------- Emergency: SOS, fall check, battery ----------
@@ -1239,7 +1255,8 @@ async function sendSOS(reason) {
     const num = sosContact();
     if (num) {
       await sayWait('Opening the message to your emergency contact. Ask someone nearby to press send.');
-      location.href = `sms:${num}?body=${encodeURIComponent(msg)}`;
+      const a = document.createElement('a');   // a link click never replaces the app page, even if this device has no SMS app
+      a.href = `sms:${num}?body=${encodeURIComponent(msg)}`; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
     } else if (navigator.share) {
       try { await navigator.share({ text: msg }); } catch (e) { /* cancelled */ }
     } else {
@@ -1307,7 +1324,9 @@ function updateNavCard(pos) {
   set('.nv-next', e => { e.textContent = `Next: ${describeStep(nav.steps[stepIdx], lang)}${toNext > 0 && !nav.finished() ? ' in ' + toNext + ' m' : ''}`; });
   set('.nv-bar', e => { e.style.width = pct + '%'; });
 }
+let offCount = 0, lastReroute = 0, rerouting = false;
 function beginNav(steps, label, dest) {
+  offCount = 0;
   nav = new Navigator(steps); navLabel = label; routeLine = steps.line || null; destPos = dest || null;
   $('navCard').hidden = false; $('mapNav').hidden = false;
   navStatus.textContent = 'Navigating to ' + label;
@@ -1316,6 +1335,21 @@ function beginNav(steps, label, dest) {
   watchId = navigator.geolocation.watchPosition(p => {
     if (!nav) return;
     lastPos = [p.coords.latitude, p.coords.longitude]; gpsAcc = p.coords.accuracy;
+    // off the route for 3 fixes in a row: plan a new route from here (not more than once per 20 s)
+    if (routeLine && destPos && gpsAcc < 40 && !nav.finished()) {
+      offCount = distToLine(lastPos, routeLine) > 45 ? offCount + 1 : 0;
+      if (offCount >= 3 && !rerouting && Date.now() - lastReroute > 20000) {
+        rerouting = true; lastReroute = Date.now(); offCount = 0;
+        queueSay('You are off the route. Finding a new route.', 1, 'reroute', { ttl: 6000 });
+        getRoute(lastPos, destPos).then(st => {
+          if (!nav) return;
+          nav = new Navigator(st); routeLine = st.line || null;
+          queueSay(nav.first(lang), 2, 'nav', { ttl: 10000 }); updateNavCard(lastPos); drawRoute();
+        }).catch(() => queueSay('Could not find a new route. Please check the internet.', 2, 'reroute', { ttl: 6000 }))
+          .finally(() => { rerouting = false; });
+        return;
+      }
+    }
     const msg = nav.update(lastPos, lang);
     if (msg) {
       queueSay(msg, 2, 'nav', { ttl: 10000 });
@@ -1454,6 +1488,11 @@ async function runCommand(c) {
   switch (c.cmd) {
     case 'where': return whereAmI();
     case 'sos': return sendSOS('');
+    case 'navinfo': {
+      if (!nav) return sayWait('Navigation is not on.');
+      const rem = lastPos ? nav.remainingM(lastPos) : nav.totalM();
+      return sayWait(`${distanceText(rem)} left, about ${durationText(rem / 1.2)}. Next: ${describeStep(nav.steps[Math.min(nav.i + 1, nav.steps.length - 1)], lang)}.`);
+    }
     case 'battery': return sayWait(batt != null ? `Battery is ${batt} percent.` : 'Battery level is not available on this phone.');
     case 'repeat': return sayWait(lastText || 'Nothing to repeat yet.');
     case 'calibrate': return calibrate();
