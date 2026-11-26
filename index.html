@@ -1270,7 +1270,7 @@ async function fallCheck() {
   try {
     if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
     await sayWait('I felt a hard fall. Are you okay? Say I am fine. If I hear nothing, I will send an SOS.');
-    const heard = (await listenWithBeep(8000)) || '';
+    const heard = (await listenWithBeep(8000, t => /\b(fine|ok|okay|good|safe|yes|help|no)\b/i.test(t))) || '';
     showHeard(heard || '—');
     if (/\b(fine|ok|okay|good|safe|yes)\b/i.test(heard) && !/\b(not|no|help)\b/i.test(heard)) { await sayWait('Okay. Glad you are fine.'); return; }
     await sendSOS('A hard fall was detected.');
@@ -1441,15 +1441,20 @@ function sayWait(text) {            // speak and resolve when finished
     setTimeout(() => synth.speak(u), 60);
   });
 }
-function listen(ms = 7000) {        // resolves with the heard text, or null
+function listen(ms = 7000, accept = null) {        // resolves with the heard text, or null. accept(text): is this a text the app understands?
   return new Promise(res => {
     if (!SR) return res(null);
     const r = new SR();
-    r.lang = 'en-IN'; r.interimResults = false; r.maxAlternatives = 1;
+    r.lang = 'en-IN'; r.interimResults = false; r.maxAlternatives = 5;   // the phone often hears the right word as 2nd or 3rd guess
     if (localSR) { try { r.processLocally = true; } catch (e) { /* older Chrome */ } }
     let fin = false;
     const finish = t => { if (fin) return; fin = true; clearTimeout(tm); try { r.stop(); } catch (e) { /* ignore */ } res(t); };
-    r.onresult = e => finish(e.results[0][0].transcript);
+    r.onresult = e => {
+      const alts = []; for (let i = 0; i < e.results[0].length; i++) alts.push(e.results[0][i].transcript);
+      let pick = alts[0];
+      if (accept) { try { if (!accept(pick)) { const b = alts.find(a => accept(a)); if (b) pick = b; } } catch (x) { /* keep first */ } }
+      finish(pick);
+    };
     r.onerror = () => finish(null);
     r.onend = () => finish(null);
     const tm = setTimeout(() => finish(null), ms);
@@ -1460,9 +1465,9 @@ function setListening(on) {
   document.querySelectorAll('#voiceBtn,.speakBtn').forEach(b => { b.dataset.state = on ? 'listening' : ''; });
   $('voiceLabel').textContent = on ? 'Listening…' : (handsFree ? 'Tap anywhere to speak' : 'Tap and speak');
 }
-async function listenWithBeep(ms) {
+async function listenWithBeep(ms, accept) {
   setListening(true); beep(0, 'warn');
-  const t = await listen(ms);
+  const t = await listen(ms, accept);
   setListening(false);
   return t;
 }
@@ -1474,7 +1479,7 @@ function showHeard(t) {
 async function askYesNo(prompt) {
   for (let i = 0; i < 2; i++) {
     await sayWait(i ? 'Please say yes or no.' : prompt);
-    const a = parseYesNo((await listenWithBeep(6000)) || '');
+    const a = parseYesNo((await listenWithBeep(6000, t => !!parseYesNo(t))) || '');
     if (a) return a;
   }
   return null;
@@ -1519,7 +1524,7 @@ async function voiceDestination() {
     await sayWait(nav ? 'Navigation is on. Say stop to cancel, or say a new destination.' : 'Where do you want to go? Or say a command.');
     let heard = null;
     for (let i = 0; i < 2 && !heard; i++) {
-      heard = await listenWithBeep(7000);
+      heard = await listenWithBeep(7000, t => !!parseCommand(t));
       if (!heard && i === 0) await sayWait('I did not hear you. Please say the place again.');
     }
     if (!heard) { await sayWait('Sorry, I could not hear a destination. Tap to try again.'); return; }
